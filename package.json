@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "semantic-lint": "tsx cli/semantic-lint.ts",
+    "eval:relay": "tsx scripts/eval-relay-clause.ts",
     "record:relay": "tsx scripts/record.ts relay",
     "record:walkthrough": "tsx scripts/record.ts walkthrough"
   },

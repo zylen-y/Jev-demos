@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { censusAddsUp, placeStreamEdit, readoutAddsUp, relayCensus, relayReadout } from "./census";
-import { mockAction, RECORD_POLICY, type JudgedRow } from "./judge";
+import { applyAddedClause, mockClauseApplies, RECORD_POLICY, type JudgedRow } from "./judge";
 
 const keep = { before: "keep" as const, after: "keep" as const };
 const flip = { before: "keep" as const, after: "revert" as const };
@@ -60,18 +60,12 @@ describe("relay census", () => {
 });
 
 describe("record policy", () => {
-  it("reverts an edit that mentions an election", () => {
-    expect(
-      mockAction(
-        { id: "enwiki:1", title: "Election night", wiki: "enwiki", summary: "copyedit", user: "Ada", bot: false, byteDelta: 20 },
-        RECORD_POLICY,
-      ),
-    ).toBe("revert");
-    expect(
-      mockAction(
-        { id: "enwiki:2", title: "Linen", wiki: "enwiki", summary: "typo", user: "Ada", bot: false, byteDelta: 2 },
-        RECORD_POLICY,
-      ),
-    ).toBe("keep");
+  it("reverts an election edit and leaves a revert summary on any other page", () => {
+    const election = { id: "enwiki:1", title: "Election night", wiki: "enwiki", summary: "Undid revision 12", user: "Ada", bot: false, byteDelta: 20 };
+    const shoe = { id: "enwiki:2", title: "Shoe", wiki: "enwiki", summary: "Reverted edits by [[Special:Contribs/Ada]]", user: "Ada", bot: false, byteDelta: 2 };
+    expect(mockClauseApplies(election, RECORD_POLICY)).toBe(true);
+    expect(applyAddedClause("keep", true)).toBe("revert");
+    expect(mockClauseApplies(shoe, RECORD_POLICY)).toBe(false);
+    expect(applyAddedClause("review", false)).toBe("review");
   });
 });

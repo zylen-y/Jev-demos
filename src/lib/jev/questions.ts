@@ -1,9 +1,9 @@
-import type { ChoiceQuestion, NoulQuestion, ScoreQuestion, SystemOneRequest } from "./types";
+import type { ChoiceQuestion, NoulQuestion, QuestionEntry, ScoreQuestion, SystemOneRequest } from "./types";
 import { JEV_MODEL } from "./types";
 
 export function noul(
-  instructions: string,
-  criteria?: { true: string; false: string },
+  instructions: QuestionEntry,
+  criteria?: { true: QuestionEntry; false: QuestionEntry },
 ): NoulQuestion {
   return criteria
     ? { type: "noul", instructions, criteria }
@@ -11,8 +11,8 @@ export function noul(
 }
 
 export function choice(
-  instructions: string,
-  criteria: Record<string, string | null>,
+  instructions: QuestionEntry,
+  criteria: Record<string, QuestionEntry | null>,
 ): ChoiceQuestion {
   return { type: "choice", instructions, criteria };
 }

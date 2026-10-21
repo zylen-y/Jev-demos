@@ -147,6 +147,22 @@ describe("cost and validation", () => {
     });
     expect(parsed.ok).toBe(true);
     if (parsed.ok) expect(parsed.request.model).toBe(JEV_MODEL);
+    const structured = validateSystemOneBody({
+      state: { article_title: "Shoe", edit_summary: "Reverted edits by Ada" },
+      questions: {
+        rule_applies: {
+          type: "noul",
+          instructions: { question: "Does the added rule apply?", no: "The word revert is not a yes." },
+          criteria: { true: "The rule applies.", false: { meaning: "It does not." } },
+        },
+      },
+    });
+    expect(structured.ok).toBe(true);
+    if (structured.ok) {
+      const question = structured.request.questions.rule_applies;
+      expect(question?.type).toBe("noul");
+      if (question?.type === "noul") expect(question.instructions).toMatchObject({ no: "The word revert is not a yes." });
+    }
   });
 
   it("parses answers and refuses a shapeless payload", () => {

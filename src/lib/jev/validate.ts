@@ -1,4 +1,4 @@
-import type { Question, SystemOneRequest } from "./types";
+import type { ChoiceQuestion, NoulQuestion, Question, QuestionEntry, SystemOneRequest } from "./types";
 import { JEV_MODEL } from "./types";
 
 export type Validation =
@@ -65,36 +65,26 @@ function parseQuestion(id: string, value: unknown): Question | string {
   if (typeof question.type !== "string" || !QUESTION_TYPES.has(question.type)) {
     return `Question "${id}" has an unknown type.`;
   }
-  const instructions = question.instructions;
-  if (
-    instructions != null &&
-    typeof instructions !== "string" &&
-    (typeof instructions !== "object" || instructions === null)
-  ) {
+  const instructions = copyEntry(question.instructions);
+  if (question.instructions != null && instructions === undefined) {
     return `Question "${id}" has invalid instructions.`;
   }
   if (question.type === "noul") {
-    return {
-      type: "noul",
-      ...(typeof instructions === "string" ? { instructions } : {}),
-      ...(question.criteria && typeof question.criteria === "object"
-        ? { criteria: question.criteria as { true?: string; false?: string } }
-        : {}),
-    };
+    const criteria = copyNoulCriteria(question.criteria);
+    if (question.criteria != null && criteria === undefined) {
+      return `Noul "${id}" has invalid criteria.`;
+    }
+    const parsed: NoulQuestion = { type: "noul" };
+    if (instructions !== undefined) parsed.instructions = instructions;
+    if (criteria) parsed.criteria = criteria;
+    return parsed;
   }
   if (question.type === "choice") {
-    if (!question.criteria || typeof question.criteria !== "object" || Array.isArray(question.criteria)) {
-      return `Choice "${id}" needs a criteria map.`;
-    }
-    const criteria = question.criteria as Record<string, string | null>;
-    if (Object.keys(criteria).length === 0) {
-      return `Choice "${id}" needs at least one option.`;
-    }
-    return {
-      type: "choice",
-      ...(typeof instructions === "string" ? { instructions } : {}),
-      criteria,
-    };
+    const criteria = copyChoiceCriteria(id, question.criteria);
+    if (typeof criteria === "string") return criteria;
+    const parsed: ChoiceQuestion = { type: "choice", criteria };
+    if (instructions !== undefined) parsed.instructions = instructions;
+    return parsed;
   }
   if (!Array.isArray(question.criteria) || question.criteria.length < 2) {
     return `Score "${id}" needs at least two rubric levels.`;
@@ -104,7 +94,50 @@ function parseQuestion(id: string, value: unknown): Question | string {
   }
   return {
     type: "score",
-    ...(typeof instructions === "string" ? { instructions } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
     criteria: question.criteria,
   };
+}
+
+function copyEntry(value: unknown): QuestionEntry | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return value as Record<string, unknown>;
+  return undefined;
+}
+
+function copyNoulCriteria(value: unknown): NoulQuestion["criteria"] | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const criteria: NonNullable<NoulQuestion["criteria"]> = {};
+  if ("true" in record) {
+    const entry = copyEntry(record.true);
+    if (record.true != null && entry === undefined) return undefined;
+    if (entry !== undefined) criteria.true = entry;
+  }
+  if ("false" in record) {
+    const entry = copyEntry(record.false);
+    if (record.false != null && entry === undefined) return undefined;
+    if (entry !== undefined) criteria.false = entry;
+  }
+  return criteria;
+}
+
+function copyChoiceCriteria(id: string, value: unknown): ChoiceQuestion["criteria"] | string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return `Choice "${id}" needs a criteria map.`;
+  }
+  const criteria: ChoiceQuestion["criteria"] = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (item === null) {
+      criteria[key] = null;
+      continue;
+    }
+    const entry = copyEntry(item);
+    if (entry === undefined) return `Choice "${id}" option "${key}" must be text or JSON.`;
+    criteria[key] = entry;
+  }
+  if (Object.keys(criteria).length === 0) return `Choice "${id}" needs at least one option.`;
+  return criteria;
 }

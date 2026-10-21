@@ -11,8 +11,14 @@ import { judgeEdits, type BurstItem } from "@/lib/relay/burst";
 import { placeStreamEdit, relayCensus, relayReadout } from "@/lib/relay/census";
 import {
   actionFromAnswers,
+  actionFromIncoming,
+  applyAddedClause,
   DEFAULT_POLICY,
+  incomingClauseRequest,
+  isAddedClause,
   mockAction,
+  mockClauseApplies,
+  mockCurrent,
   MOCK_PLAYBACK_MS,
   readyPrefix,
   RECORD_POLICY,
@@ -195,7 +201,7 @@ export function RelayStage() {
     }
     const slot: Slot = {
       edit,
-      before: mockRef.current ? mockAction(edit, committedRef.current) : null,
+      before: mockRef.current ? mockCurrent(edit, committedRef.current) : null,
       after: null,
     };
     const placed = placeStreamEdit(cellsRef.current, [] as Slot[], slot, false, RELAY_BACKLOG);
@@ -209,14 +215,15 @@ export function RelayStage() {
     const key = apiKeyRef.current;
     if (!key) return;
     try {
+      const policy = incomingPolicyRef.current;
       const call = await postSystemOne({
         apiKey: key,
-        request: relayRequest(edit, incomingPolicyRef.current),
+        request: isAddedClause(policy) ? incomingClauseRequest(edit, policy) : relayRequest(edit, policy),
         timeoutMs: 8000,
         maxRetries: 2,
         signal: abortRef.current?.signal,
       });
-      const action = actionFromAnswers(call.response.answers);
+      const action = isAddedClause(policy) ? actionFromIncoming(call.response.answers) : actionFromAnswers(call.response.answers);
       incomingRef.current = incomingRef.current.map((item) => (item.edit.id === edit.id ? { ...item, action } : item));
       setIncoming(incomingRef.current);
     } catch {
@@ -313,11 +320,14 @@ export function RelayStage() {
     try {
       if (mockRef.current) {
         const started = performance.now();
-        const next = snapshot.map((slot) => ({
-          ...slot,
-          before: slot.before ?? mockAction(slot.edit, committedRef.current),
-          after: mockAction(slot.edit, policyText),
-        }));
+        const next = snapshot.map((slot) => {
+          const standing = slot.before ?? mockAction(slot.edit, DEFAULT_POLICY);
+          return {
+            ...slot,
+            before: standing,
+            after: isAddedClause(policyText) ? applyAddedClause(standing, mockClauseApplies(slot.edit, policyText)) : mockAction(slot.edit, policyText),
+          };
+        });
         cellsRef.current = next;
         setCells(next);
         const durationMs = performance.now() - started;
@@ -361,6 +371,8 @@ export function RelayStage() {
         apiKey: apiKeyRef.current,
         jobs: cellsRef.current.map((slot) => ({ id: slot.edit.id, edit: slot.edit })),
         policy: policyText,
+        kind: isAddedClause(policyText) ? "clause" : "standing",
+        standingOf: (id) => cellsRef.current.find((slot) => slot.edit.id === id)?.before ?? null,
         signal: linked,
         onItem: (item) => applyBurst("after", "rejudge", item),
       });
@@ -520,7 +532,7 @@ export function RelayStage() {
         const slots: Slot[] = edits.map((edit) => ({
           edit,
           before: mock ? mockAction(edit, DEFAULT_POLICY) : null,
-          after: mock && waveScene ? mockAction(edit, RECORD_POLICY) : null,
+          after: mock && waveScene ? applyAddedClause(mockAction(edit, DEFAULT_POLICY), mockClauseApplies(edit, RECORD_POLICY)) : null,
         }));
         for (const slot of slots) seenRef.current.add(slot.edit.id);
         cellsRef.current = slots;
@@ -586,6 +598,7 @@ export function RelayStage() {
   const sweeping = phase === "playing" || phase === "done";
   const readout = relayReadout(census, sweeping);
   const ruleReverts = useMemo(() => countRuleReverts(cells, revealed), [cells, revealed]);
+  const otherChanges = Math.max(0, census.flipped - ruleReverts);
   const showRuleCount = present && sweeping;
   const headlineLabel = showRuleCount ? "Reverted" : sweeping ? "Flipped" : "Judged";
   const headlineValue = showRuleCount ? ruleReverts : readout.headline;
@@ -626,6 +639,7 @@ export function RelayStage() {
       data-mock={mock ? "1" : "0"}
       data-phase={phase}
       data-present={present ? "1" : "0"}
+      data-other={otherChanges}
       data-reverts={ruleReverts}
       data-settled={phase === "done" && census.total > 0 && census.shown >= census.total ? "1" : "0"}
       data-shown={census.shown}
@@ -691,6 +705,11 @@ export function RelayStage() {
             {showRuleCount ? <p className="mt-2 text-xl text-[#efeae0]/80">by the new rule</p> : null}
             <p className={`mt-2 text-[#efeae0]/75 ${present ? "text-xl" : "text-sm"}`}>
               {sweeping ? `${readout.unchanged.toLocaleString()} unchanged` : "baseline"}
+              {sweeping ? (
+                <span data-count={otherChanges} data-testid="relay-other">
+                  {` · ${otherChanges.toLocaleString()} other changes`}
+                </span>
+              ) : null}
               {census.failed > 0 ? ` · ${census.failed.toLocaleString()} failed` : ""}
               <span className={`mono ml-3 uppercase ${present ? "text-sm tracking-[0.12em]" : "text-[11px] tracking-[0.14em]"}`} data-count={readout.progress} data-testid="relay-revealed">
                 {readout.progress.toLocaleString()} of {readout.total.toLocaleString()}
@@ -739,9 +758,17 @@ export function RelayStage() {
       </div>
 
       <footer className="border-t border-white/10 bg-[#14120f] px-4 py-3 sm:px-5">
+        {policy.trim() !== DEFAULT_POLICY.trim() ? (
+          <p className={`mb-2 leading-snug text-[#efeae0]/75 ${present ? "text-lg" : "text-xs"}`} data-testid="relay-standing">
+            <span className={`mono mr-2 uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>Standing policy</span>
+            {DEFAULT_POLICY}
+          </p>
+        ) : null}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <label className="block min-w-0 flex-1 text-sm" htmlFor="relay-policy">
-            <span className={`mono mb-1.5 block uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>Policy</span>
+            <span className={`mono mb-1.5 block uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>
+              {policy.trim() === DEFAULT_POLICY.trim() ? "Policy" : "Added clause"}
+            </span>
             <textarea
               className={`w-full resize-none rounded-md border border-white/15 bg-[#0c0b09] px-3 py-2 leading-snug text-[#efeae0] ${present ? "h-28 text-[1.7rem]" : "h-16 text-sm leading-5"} ${storyStep === "change" ? "ring-2 ring-[#ff3b1f]" : ""}`}
               data-testid="relay-policy"

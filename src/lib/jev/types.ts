@@ -12,21 +12,24 @@ export const OUTPUT_USD_PER_MILLION = 0;
 /** Model-time figure used as a visual reference. Round trip includes network and the proxy. */
 export const MODEL_TARGET_MS = 150;
 
+/** Text or JSON, matching the System One entry type for instructions and criteria. */
+export type QuestionEntry = string | Record<string, unknown> | unknown[];
+
 export type NoulQuestion = {
   type: "noul";
-  instructions?: string;
-  criteria?: { true?: string; false?: string } | null;
+  instructions?: QuestionEntry;
+  criteria?: { true?: QuestionEntry; false?: QuestionEntry } | null;
 };
 
 export type ChoiceQuestion = {
   type: "choice";
-  instructions?: string;
-  criteria: Record<string, string | null>;
+  instructions?: QuestionEntry;
+  criteria: Record<string, QuestionEntry | null>;
 };
 
 export type ScoreQuestion = {
   type: "score";
-  instructions?: string;
+  instructions?: QuestionEntry;
   criteria: string[];
 };
 

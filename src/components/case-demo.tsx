@@ -198,6 +198,7 @@ export function CaseDemo({ config }: { config: CaseDemoConfig }) {
 }
 
 function describe(question: Question): { type: string; instructions: string } {
-  const instructions = "instructions" in question && question.instructions ? question.instructions : "No instruction text.";
+  const raw = "instructions" in question ? question.instructions : undefined;
+  const instructions = typeof raw === "string" ? raw : raw ? JSON.stringify(raw) : "No instruction text.";
   return { type: question.type, instructions };
 }

@@ -51,7 +51,9 @@ describe("case demos", () => {
       for (const question of Object.values(systemRequest.questions)) {
         if (question.type === "score") expect(question.criteria.length).toBeGreaterThanOrEqual(2);
         if (question.type === "choice") expect(Object.keys(question.criteria).length).toBeGreaterThan(0);
-        if (question.type === "noul") expect(question.instructions?.length).toBeGreaterThan(8);
+        if (question.type === "noul" && typeof question.instructions === "string") {
+          expect(question.instructions.length).toBeGreaterThan(8);
+        }
       }
       const view = demo.decide(fakeAnswers(systemRequest.questions), sample.fields, thresholdDefaults(demo));
       expect(view.headline.length).toBeGreaterThan(0);
