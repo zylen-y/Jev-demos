@@ -21,7 +21,8 @@ import {
 } from "@/lib/relay/judge";
 import { metricDataAttributes, spendFromSummary, type MetricReading } from "@/lib/relay/metrics";
 import { columnsFor, paintRelayField } from "@/lib/relay/paint";
-import { formatRelayUsd, percentile, summarizeRelay, type RelaySample, type RelaySummary } from "@/lib/relay/stats";
+import { formatRelayCents, formatRelayUsd, percentile, summarizeRelay, type RelaySample, type RelaySummary } from "@/lib/relay/stats";
+import { isStoryStep, pickRuleFlips, pickShowcase, sampleVerdict, storyCaption, type StoryStep } from "@/lib/relay/story";
 import { backfillWikipedia, editFromEvent, RELAY_BACKLOG, WIKI_STREAM_URL, type WikiEdit } from "@/lib/relay/wiki";
 import type { JudgedRow } from "@/lib/relay/judge";
 
@@ -69,6 +70,7 @@ export function RelayStage() {
   const [showCard, setShowCard] = useState(false);
   const [measured, setMeasured] = useState<MetricReading | null>(null);
   const [ledger, setLedger] = useState({ stream: EMPTY_SUMMARY, rejudge: EMPTY_SUMMARY, modelP50: null as number | null });
+  const [storyStep, setStoryStep] = useState<StoryStep | null>(null);
 
   const cellsRef = useRef<Slot[]>([]);
   const revealedRef = useRef(0);
@@ -98,6 +100,7 @@ export function RelayStage() {
   const abortRef = useRef<AbortController | null>(null);
   const baselineAbortRef = useRef<AbortController | null>(null);
   const baselineRunRef = useRef(false);
+  const markChangesRef = useRef(false);
   const aliveRef = useRef(true);
   const openRef = useRef(open);
 
@@ -113,6 +116,7 @@ export function RelayStage() {
     setBanner(null);
     setStreamOn(false);
     setShowCard(false);
+    setStoryStep(null);
     setBaselineSettled(mock);
     setWallMs(null);
     setMeasured(null);
@@ -405,6 +409,7 @@ export function RelayStage() {
     takeEditRef.current = takeEdit;
     runRejudgeRef.current = runRejudge;
     startBaselineRef.current = startBaseline;
+    markChangesRef.current = present && (phase === "playing" || phase === "done");
   });
 
   useEffect(() => {
@@ -434,6 +439,7 @@ export function RelayStage() {
             cells: cellsRef.current,
             revealed: revealedRef.current,
             columns: columnsFor(rect.width, rect.height, cellsRef.current.length),
+            markChanges: markChangesRef.current,
           });
         }
       }
@@ -484,10 +490,20 @@ export function RelayStage() {
   }, []);
 
   useEffect(() => {
-    if (phase !== "done" || !present) return;
+    if (!present) return;
+    const onStory = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (typeof detail === "string" && isStoryStep(detail)) setStoryStep(detail);
+    };
+    window.addEventListener("relay-story", onStory);
+    return () => window.removeEventListener("relay-story", onStory);
+  }, [present]);
+
+  useEffect(() => {
+    if (phase !== "done" || !present || storyStep != null) return;
     const timer = setTimeout(() => setShowCard(true), CARD_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [phase, present]);
+  }, [phase, present, storyStep]);
 
   useEffect(() => {
     let cancel = false;
@@ -564,10 +580,15 @@ export function RelayStage() {
 
   const census = relayCensus(cells, revealed);
   const activeSummary = ledger.rejudge.decisions > 0 ? ledger.rejudge : ledger.stream;
-  const examples = useMemo(() => frontierFlips(cells, revealed), [cells, revealed]);
+  const examples = useMemo(() => pickRuleFlips(cells, revealed, 4), [cells, revealed]);
+  const showcase = useMemo(() => pickShowcase(cells, cells.length, 3), [cells]);
+  const verdictSample = useMemo(() => sampleVerdict(cells), [cells]);
   const sweeping = phase === "playing" || phase === "done";
   const readout = relayReadout(census, sweeping);
   const headlineLabel = sweeping ? "Flipped" : "Judged";
+  const telling = present && storyStep != null;
+  const showCounter = !telling || storyStep === "wave";
+  const showSidebar = !telling || storyStep === "wave";
 
   const streamLabel = !streamOn
     ? "Backlog"
@@ -586,9 +607,11 @@ export function RelayStage() {
   }
 
   const busy = phase === "loading" || phase === "judging" || phase === "playing";
-  const spend = mock || activeSummary.decisions === 0 || activeSummary.unpriced === activeSummary.decisions ? null : formatRelayUsd(activeSummary.spendUsd);
+  const rejudgeSpend =
+    mock || ledger.rejudge.decisions === 0 || ledger.rejudge.unpriced === ledger.rejudge.decisions ? null : formatRelayUsd(ledger.rejudge.spendUsd);
   const cardTime = mock ? `${(MOCK_PLAYBACK_MS / 1000).toFixed(1)} s playback` : wallMs != null ? formatMs(wallMs) : null;
-  const cardSpend = !mock && measured?.spendUsd != null ? formatRelayUsd(measured.spendUsd) : null;
+  const cardSpend = !mock && measured?.spendUsd != null ? formatRelayCents(measured.spendUsd) : null;
+  const cardOpen = Boolean(cardTime && (storyStep === "card" || showCard));
 
   return (
     <div
@@ -601,6 +624,7 @@ export function RelayStage() {
       data-phase={phase}
       data-present={present ? "1" : "0"}
       data-shown={census.shown}
+      data-story={storyStep ?? ""}
       data-testid="relay-stage"
       data-unchanged={census.unchanged}
     >
@@ -626,17 +650,19 @@ export function RelayStage() {
           <p className="mono hidden text-[11px] uppercase tracking-[0.18em] text-[#efeae0]/60 sm:block">Relay · Wikipedia</p>
         </div>
         <div className="flex items-center gap-3">
-          <p className={`mono hidden uppercase text-[#efeae0]/55 md:block ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`} data-testid="relay-stream">
-            {streamLabel}
-          </p>
-          {held > 0 ? (
+          {present ? null : (
+            <p className="mono hidden text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/55 md:block" data-testid="relay-stream">
+              {streamLabel}
+            </p>
+          )}
+          {!present && held > 0 ? (
             <p className="mono text-[11px] uppercase tracking-[0.14em] text-[#efeae0]/70" data-count={held} data-testid="relay-incoming">
               {held.toLocaleString()} new, held off the grid
             </p>
           ) : null}
           {mock ? (
             <p className="bg-[#e23b16] px-3 py-1.5 text-sm font-semibold tracking-[0.22em] text-white">MOCKED</p>
-          ) : (
+          ) : present ? null : (
             <p className="mono text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/70">{ready && apiKey ? "Key in this browser" : "No key yet"}</p>
           )}
         </div>
@@ -647,50 +673,61 @@ export function RelayStage() {
           <canvas aria-hidden="true" className="h-full w-full" ref={canvasRef} />
         </div>
         <div className="pointer-events-none absolute left-0 top-0 h-64 w-[min(100%,28rem)] bg-gradient-to-br from-[#100e0c] via-[#100e0c]/82 to-transparent" />
-        <div className={`pointer-events-none absolute left-4 top-4 sm:left-6 sm:top-6 ${present ? "sm:left-8 sm:top-6" : ""}`}>
-          <p className={`mono uppercase text-[#efeae0]/60 ${present ? "text-sm tracking-[0.18em]" : "text-[11px] tracking-[0.2em]"}`}>{headlineLabel}</p>
-          <p
-            className={`serif leading-none ${readout.headline > 0 ? "text-[#ff3b1f]" : "text-[#efeae0]"} ${present ? "text-8xl sm:text-9xl" : "text-6xl sm:text-7xl lg:text-8xl"}`}
-            data-count={readout.headline}
-            data-testid="relay-flips"
-          >
+        {showCounter ? (
+          <div className={`pointer-events-none absolute left-4 top-4 sm:left-6 sm:top-6 ${present ? "max-w-xs sm:left-8 sm:top-6" : ""}`}>
+            <p className={`mono uppercase text-[#efeae0]/60 ${present ? "text-sm tracking-[0.18em]" : "text-[11px] tracking-[0.2em]"}`}>{headlineLabel}</p>
+            <p
+              className={`serif leading-none ${readout.headline > 0 ? "text-[#ff3b1f]" : "text-[#efeae0]"} ${present ? "text-7xl" : "text-6xl sm:text-7xl lg:text-8xl"}`}
+              data-count={readout.headline}
+              data-testid="relay-flips"
+            >
+              {readout.headline.toLocaleString()}
+            </p>
+            <p className={`mt-2 text-[#efeae0]/75 ${present ? "text-xl" : "text-sm"}`}>
+              {sweeping ? `${readout.unchanged.toLocaleString()} unchanged` : "baseline"}
+              {census.failed > 0 ? ` · ${census.failed.toLocaleString()} failed` : ""}
+              <span className={`mono ml-3 uppercase ${present ? "text-sm tracking-[0.12em]" : "text-[11px] tracking-[0.14em]"}`} data-count={readout.progress} data-testid="relay-revealed">
+                {readout.progress.toLocaleString()} of {readout.total.toLocaleString()}
+              </span>
+            </p>
+            {present && sweeping ? <WaveLegend /> : <Legend />}
+          </div>
+        ) : (
+          <p className="sr-only" data-count={readout.headline} data-testid="relay-flips">
             {readout.headline.toLocaleString()}
           </p>
-          <p className={`mt-2 text-[#efeae0]/75 ${present ? "text-xl" : "text-sm"}`}>
-            {sweeping ? `${readout.unchanged.toLocaleString()} unchanged` : "baseline"}
-            {census.failed > 0 ? ` · ${census.failed.toLocaleString()} failed` : ""}
-            <span className={`mono ml-3 uppercase ${present ? "text-sm tracking-[0.12em]" : "text-[11px] tracking-[0.14em]"}`} data-count={readout.progress} data-testid="relay-revealed">
-              {readout.progress.toLocaleString()} of {readout.total.toLocaleString()}
-            </span>
-          </p>
-          <Legend />
-        </div>
-        {present && (phase === "playing" || (phase === "done" && !showCard)) ? (
-          <div className="pointer-events-none absolute left-[24rem] right-[28rem] top-8" data-testid="relay-caption">
-            <p className="serif text-6xl leading-none">New rule.</p>
-            <p className="serif mt-3 text-4xl leading-tight">{census.total.toLocaleString()} live Wikipedia edits re-judged.</p>
-          </div>
+        )}
+        {storyStep && storyStep !== "examples" && storyStep !== "card" ? <StoryBanner step={storyStep} total={census.total} /> : null}
+        {storyStep === "stream" ? <StreamPanel rows={cells.slice(0, 4)} /> : null}
+        {storyStep === "judge" ? <JudgePanel sample={verdictSample} /> : null}
+        {storyStep === "examples" ? <ShowcasePanel rows={showcase} total={census.total} /> : null}
+        {showSidebar ? (
+          <aside className={`absolute bottom-4 right-4 hidden lg:block ${present ? "w-[32rem]" : "w-[340px]"}`}>
+            <ExampleCard examples={examples} incoming={incoming} live={cells.slice(0, 5)} mock={mock} present={present} showFlips={examples.length > 0} />
+          </aside>
         ) : null}
-        <aside className={`absolute bottom-4 right-4 hidden lg:block ${present ? "w-[32rem]" : "w-[340px]"}`}>
-          <ExampleCard examples={examples} incoming={incoming} live={cells.slice(0, 5)} mock={mock} present={present} showFlips={census.flipped > 0} />
-        </aside>
         {phase === "loading" ? (
           <p className="absolute inset-x-0 top-1/2 text-center text-sm text-[#efeae0]/70">Pulling the last {RELAY_BACKLOG.toLocaleString()} English Wikipedia edits…</p>
         ) : null}
         {banner ? <p className="absolute inset-x-6 top-1/2 text-center text-sm text-[#efeae0]">{banner}</p> : null}
-        {showCard && cardTime ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#100e0c]/94 px-8" data-testid="relay-stat-card">
-            <p className="serif text-center text-5xl leading-tight sm:text-7xl">
-              {census.total.toLocaleString()} edits
-              <span className="text-[#efeae0]/35"> · </span>
-              {cardTime}
-              {cardSpend ? (
-                <>
-                  <span className="text-[#efeae0]/35"> · </span>
-                  {cardSpend}
-                </>
-              ) : null}
-            </p>
+        {cardOpen ? (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#100e0c]/94 px-8" data-testid="relay-stat-card">
+            <div className="max-w-5xl rounded-3xl bg-[#100e0c] px-10 py-12">
+              <p className="serif text-center text-5xl leading-tight sm:text-7xl">
+                {census.total.toLocaleString()} edits
+                <span className="text-[#efeae0]/35"> · </span>
+                {cardTime}
+                {cardSpend ? (
+                  <>
+                    <span className="text-[#efeae0]/35"> · </span>
+                    {cardSpend}
+                  </>
+                ) : null}
+              </p>
+              <p className="mx-auto mt-8 max-w-3xl text-center text-2xl leading-snug text-[#efeae0]/80 sm:text-3xl">
+                What a policy change would have done, before you ship it.
+              </p>
+            </div>
           </div>
         ) : null}
       </div>
@@ -700,7 +737,7 @@ export function RelayStage() {
           <label className="block min-w-0 flex-1 text-sm" htmlFor="relay-policy">
             <span className={`mono mb-1.5 block uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>Policy</span>
             <textarea
-              className={`w-full resize-none rounded-md border border-white/15 bg-[#0c0b09] px-3 py-2 leading-snug text-[#efeae0] ${present ? "h-28 text-[1.7rem]" : "h-16 text-sm leading-5"}`}
+              className={`w-full resize-none rounded-md border border-white/15 bg-[#0c0b09] px-3 py-2 leading-snug text-[#efeae0] ${present ? "h-28 text-[1.7rem]" : "h-16 text-sm leading-5"} ${storyStep === "change" ? "ring-2 ring-[#ff3b1f]" : ""}`}
               data-testid="relay-policy"
               id="relay-policy"
               onChange={(event) => setPolicy(event.target.value)}
@@ -732,9 +769,9 @@ export function RelayStage() {
           <MaybeStat label="Model p50" value={ledger.modelP50 == null ? null : formatMs(ledger.modelP50)} />
           <MaybeStat label="Re-judge" value={wallMs != null ? formatMs(wallMs) : localPassMs != null ? `${formatMs(localPassMs)} local` : null} />
           <MaybeStat label="Wave" value={mock && (phase === "playing" || phase === "done") ? `${(MOCK_PLAYBACK_MS / 1000).toFixed(1)} s playback` : null} />
-          <MaybeStat label="Spend" testId="relay-spend" value={spend} />
+          <MaybeStat label="Re-judge spend" testId="relay-spend" value={rejudgeSpend} />
         </dl>
-        <p className={`mt-2 leading-4 text-[#efeae0]/45 ${present ? "text-sm" : "text-[11px]"}`}>
+        <p className={`mt-2 leading-4 text-[#efeae0]/45 ${present ? "text-sm" : "text-[11px]"} ${telling ? "sr-only" : ""}`}>
           {mock
             ? "Mocked decisions, measured on this page. Wikipedia edits are live. This is not a Jev call. The sweep is playback."
             : ready && !apiKey
@@ -747,6 +784,119 @@ export function RelayStage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function StoryBanner({ step, total }: { step: StoryStep; total: number }) {
+  const copy = storyCaption(step, total);
+  return (
+    <div
+      className={`pointer-events-none absolute z-20 flex justify-center px-6 ${step === "wave" ? "left-[24rem] right-6 top-4" : "inset-x-0 top-4"}`}
+      data-step={step}
+      data-testid="relay-caption"
+    >
+      <div className="w-full max-w-5xl rounded-2xl border border-white/15 bg-[#100e0c] px-8 py-6 shadow-[0_16px_50px_rgba(0,0,0,0.65)]">
+        <p className="serif text-center text-4xl leading-tight sm:text-5xl">{copy.title}</p>
+        {copy.detail ? <p className="mt-3 text-center text-2xl text-[#efeae0]/80">{copy.detail}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function StreamPanel({ rows }: { rows: Slot[] }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-6 top-64 z-10 flex justify-center px-6">
+      <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-white/15 bg-[#14120f] px-8 py-6 shadow-[0_16px_50px_rgba(0,0,0,0.55)]">
+        <p className="mono text-sm uppercase tracking-[0.16em] text-[#efeae0]/55">Live right now</p>
+        <ul className="mt-4 flex flex-col gap-4">
+          {rows.map((slot) => (
+            <li className="min-w-0" key={slot.edit.id}>
+              <p className="truncate font-sans text-3xl leading-tight">{slot.edit.title}</p>
+              <p className="truncate text-lg text-[#efeae0]/50">
+                {slot.edit.wiki} · {slot.edit.summary || "No summary"}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function JudgePanel({ sample }: { sample: Slot | null }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-6 top-64 z-10 flex justify-center px-6">
+      <div className="flex w-full max-w-3xl flex-col justify-center rounded-2xl border border-white/15 bg-[#14120f] px-8 py-7 shadow-[0_16px_50px_rgba(0,0,0,0.55)]">
+        <VerdictLegend />
+        {sample ? (
+          <div className="mt-8 min-w-0 border-t border-white/10 pt-6" data-testid="relay-example">
+            <p className="truncate font-sans text-4xl leading-tight">{sample.edit.title}</p>
+            <p className="mt-2 truncate text-lg text-[#efeae0]/50">{sample.edit.summary || sample.edit.wiki}</p>
+            <p className="mono mt-3 text-2xl uppercase tracking-[0.14em]">
+              <ActionName action={sample.before} />
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ShowcasePanel({ rows, total }: { rows: Slot[]; total: number }) {
+  const copy = storyCaption("examples", total);
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#100e0c]/90 px-8" data-count={rows.length} data-testid="relay-highlights">
+      <div className="w-full max-w-4xl">
+        <div className="rounded-2xl border border-white/15 bg-[#100e0c] px-8 py-6">
+          <p className="serif text-center text-4xl leading-tight sm:text-5xl">{copy.title}</p>
+        </div>
+        <ul className="mt-6 flex flex-col gap-4">
+          {rows.map((slot) => (
+            <li className="min-w-0 rounded-2xl border border-white/10 bg-[#14120f] px-8 py-5" key={slot.edit.id}>
+              <p className="line-clamp-2 font-sans text-4xl leading-tight">{slot.edit.title}</p>
+              <p className="mono mt-3 text-2xl uppercase tracking-[0.12em]">
+                <ActionName action={slot.before} />
+                <span className="px-2 text-[#efeae0]/40">→</span>
+                <ActionName action={slot.after} />
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function VerdictLegend() {
+  const items: { color: string; label: string }[] = [
+    { color: "#1f8f52", label: "Keep" },
+    { color: "#e2a23a", label: "Review" },
+    { color: "#ff3b1f", label: "Revert" },
+  ];
+  return (
+    <ul className="flex flex-wrap gap-x-10 gap-y-4">
+      {items.map((item) => (
+        <li className="flex items-center gap-3 text-3xl" key={item.label}>
+          <span className="inline-block h-8 w-8 rounded-sm" style={{ background: item.color }} />
+          {item.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function WaveLegend() {
+  return (
+    <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm uppercase tracking-[0.14em] text-[#efeae0]/75">
+      <li className="flex items-center gap-2">
+        <span className="inline-block h-3 w-3 bg-[#ff3b1f]" />
+        Verdict changed
+      </li>
+      <li className="flex items-center gap-2">
+        <span className="inline-block h-3 w-3 bg-[#173628]" />
+        Unchanged
+      </li>
+    </ul>
   );
 }
 
@@ -789,9 +939,12 @@ function ExampleCard({
   present: boolean;
 }) {
   if (showFlips) {
+    const toRevert = examples.some((slot) => slot.after === "revert" && slot.before != null && slot.before !== "revert");
     return (
       <div className="max-h-full overflow-hidden rounded-md border border-white/10 bg-[#14120f]/92 p-4 backdrop-blur-sm" data-testid="relay-examples">
-        <p className={`mono uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>Rows that changed</p>
+        <p className={`mono uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>
+          {toRevert ? "Reverted by the new rule" : "Rows that changed"}
+        </p>
         <ul className={`mt-3 flex flex-col ${present ? "gap-4" : "gap-3"}`}>
           {examples.map((slot) => (
             <li className="min-w-0 overflow-hidden" key={slot.edit.id}>
@@ -845,17 +998,6 @@ function Stat({ label, value, testId, count }: { label: string; value: string; t
 function MaybeStat({ label, value, testId }: { label: string; value: string | null; testId?: string }) {
   if (value == null) return null;
   return <Stat label={label} testId={testId} value={value} />;
-}
-
-function frontierFlips(cells: readonly Slot[], revealed: number): Slot[] {
-  const found: Slot[] = [];
-  const end = Math.min(cells.length, Math.max(0, revealed));
-  for (let index = end - 1; index >= 0 && found.length < 4; index -= 1) {
-    const slot = cells[index];
-    if (!slot?.before || !slot.after || slot.before === slot.after) continue;
-    found.push(slot);
-  }
-  return found.reverse();
 }
 
 function formatMs(value: number | null): string {

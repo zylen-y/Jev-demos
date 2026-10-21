@@ -153,10 +153,10 @@ function delay(ms: number): Promise<void> {
 
 async function ensureFonts(env: NodeJS.ProcessEnv): Promise<void> {
   if (await fontsReady()) {
-    console.log("Noto fonts, including CJK, are already installed.");
+    console.log("Noto fonts, including CJK and Tamil, are already installed.");
     return;
   }
-  console.log("Installing Noto Sans and Noto Sans CJK.");
+  console.log("Installing Noto Sans, Noto Sans CJK, and Noto Sans Tamil.");
   const packages = ["fonts-noto-core", "fonts-noto-cjk"];
   const update = ["apt-get", "update"];
   const install = ["apt-get", "install", "-y", ...packages];
@@ -169,7 +169,7 @@ async function ensureFonts(env: NodeJS.ProcessEnv): Promise<void> {
   }
   await runCommand("fc-cache", ["-f"], env, "");
   if (!(await fontsReady())) {
-    throw new Error("Noto Sans CJK is still missing. Install fonts-noto-core and fonts-noto-cjk, then run fc-cache -f.");
+    throw new Error("Noto Sans CJK or Noto Sans Tamil is still missing. Install fonts-noto-core and fonts-noto-cjk, then run fc-cache -f.");
   }
 }
 
@@ -181,7 +181,7 @@ function fontsReady(): Promise<boolean> {
       out += chunk.toString();
     });
     child.on("error", () => resolve(false));
-    child.on("close", () => resolve(/Noto Sans CJK/i.test(out)));
+    child.on("close", () => resolve(/Noto Sans CJK/i.test(out) && /Noto Sans Tamil/i.test(out)));
   });
 }
 

@@ -45,3 +45,9 @@ export function formatRelayUsd(amount: number): string {
   if (!Number.isFinite(amount)) return "—";
   return `$${amount.toFixed(5)}`;
 }
+
+/** End card. Cents, so $0.043 reads as $0.04. */
+export function formatRelayCents(amount: number): string {
+  if (!Number.isFinite(amount)) return "—";
+  return `$${amount.toFixed(2)}`;
+}

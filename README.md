@@ -43,7 +43,7 @@ The [use-case map](https://docs.typesafe.ai/concepts/use-case-map) documents rea
 
 `/relay` loads the latest English Wikipedia edits (up to 2,400) and subscribes to the public Wikimedia recent-changes stream at `https://stream.wikimedia.org/v2/stream/recentchange`. Each line is the page title, the wiki, and the edit summary. With a key in the browser, a judgment is one System One choice: keep, review, or revert, under the policy in the box.
 
-Re-judge sends that policy across the backlog. The backlog is judged under the default policy as it loads, so the grid is already colored before the new rule. Live cells then flip from the top as each response lands. That sweep is the wall clock of the burst, not a fixed replay. A mocked page still plays the sweep back over 4 seconds and labels it playback. Flipped cells take the new color and a light ring. Unchanged cells go dim. After a re-judge, the judged grid stays put. Newer stream edits are held beside it and judged under the new policy, so they cannot push a counted row off the field. Spend on screen is the summed reported input tokens at $0.042 per million. A stat without a measured value is omitted. While the sweep is moving, the decision count is the revealed prefix, the same number as flipped + unchanged + failed and the "of" count.
+Re-judge sends that policy across the backlog. The backlog is judged under the default policy as it loads, so the grid is already colored before the new rule. Live cells then flip from the top as each response lands. That sweep is the wall clock of the burst, not a fixed replay. A mocked page still plays the sweep back over 4 seconds and labels it playback. Flipped cells take the new color and a light ring. Unchanged cells go dim. After a re-judge, the judged grid stays put. Newer stream edits are held beside it and judged under the new policy, so they cannot push a counted row off the field. The footer spend figure is the re-judge only, summed from reported input tokens at $0.042 per million. A stat without a measured value is omitted. While the sweep is moving, the decision count is the revealed prefix, the same number as flipped + unchanged + failed and the "of" count. In the recording layout, a changed verdict is bright red.
 
 `?mock=1` is a labeled stand-in for review. The edits are still from Wikipedia. The decisions are a local rule, spend stays blank, and the page does not call Jev. The live Relay clip is recorded on a machine that has the key. See [Recording](#recording).
 
@@ -58,7 +58,7 @@ npm run record:relay
 npm run record:walkthrough
 ```
 
-`ffmpeg` and `ffprobe` need to be on `PATH`. The command installs Playwright Chromium. It also installs Noto Sans and Noto Sans CJK when `fc-list` does not already show them (`fonts-noto-core` and `fonts-noto-cjk` on Debian or Ubuntu), then refreshes the font cache. Those faces cover Latin and CJK, so a Wikipedia title in Chinese, Japanese, or Korean renders as itself instead of a missing-glyph box. The page lists the same Noto families after Outfit.
+`ffmpeg` and `ffprobe` need to be on `PATH`. The command installs Playwright Chromium. It also installs Noto Sans, Noto Sans CJK, and Noto Sans Tamil when `fc-list` does not already show them (`fonts-noto-core` and `fonts-noto-cjk` on Debian or Ubuntu), then refreshes the font cache. The page lists those faces, plus the other Noto script families in `fonts-noto-core` (Arabic, Devanagari, Bengali, Hebrew, Thai, and the rest), after Outfit, so a title in Tamil or Chinese renders as itself.
 
 The key comes from the `TYPESAFE_API_KEY` environment variable. The command reads it, stores it in `localStorage` before the first page load, and leaves every key field masked: the header button shows the first four and last four characters (`ts_l…hijk`), and the key dialog is a password field. Logs replace the key with `[redacted]`. The Next.js server and ffmpeg run without that variable, so the key is never printed and never typed into the page.
 
@@ -66,7 +66,7 @@ Output goes to `recordings/`, which is gitignored.
 
 | File | Contents |
 | --- | --- |
-| `recordings/relay.mp4` | Cold open on the wave with the caption, then the rule is pasted, the re-judge runs, and the clip ends on the measured stat card |
+| `recordings/relay.mp4` | A captioned story: the live stream, the keep/review/revert legend, the pasted rule, the re-judge wave, three matching edits, then the measured stat card for about four seconds |
 | `recordings/relay.json` | `p50LatencyMs`, `p95LatencyMs`, `burstSize`, `burstDurationMs`, `spendUsd` |
 | `recordings/walkthrough.mp4` | Landing, gallery, one live demo call, the graph, Relay, then a 390px pass |
 | `recordings/walkthrough.json` | That demo call’s round trip as both percentiles, and its spend |

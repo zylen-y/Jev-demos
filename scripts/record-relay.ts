@@ -4,11 +4,14 @@ import path from "node:path";
 import type { Browser, Page } from "playwright";
 import { RECORD_POLICY } from "../src/lib/relay/judge";
 import { measuredRecording, readingFromAttributes } from "../src/lib/relay/metrics";
+import type { StoryStep } from "../src/lib/relay/story";
 import { assertPageHidesKey, duration, ensureDir, ffmpeg, launchBrowser, seedKey, watchForKey } from "./record-support";
 
-const BEAT_MS = 200;
-const AFTER_PASTE_MS = 700;
-const STAT_HOLD_MS = 17_000;
+const STREAM_MS = 5_500;
+const JUDGE_MS = 6_000;
+const CHANGE_MS = 4_200;
+const EXAMPLES_MS = 7_000;
+const CARD_MS = 3_400;
 
 export async function recordRelay(options: { baseURL: string; mock: boolean; key?: string; outDir: string }): Promise<void> {
   await ensureDir(options.outDir);
@@ -17,29 +20,19 @@ export async function recordRelay(options: { baseURL: string; mock: boolean; key
   await ensureDir(work);
   try {
     const take = await recordTake(browser, options, work);
-    const cold = path.join(work, "cold.mp4");
-    const story = path.join(work, "story.mp4");
     const finalPath = path.join(options.outDir, "relay.mp4");
-    await ffmpeg(
-      ["-y", "-ss", take.waveOffset.toFixed(3), "-i", take.webm, "-t", "5", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", cold],
-      options.key ?? "",
-    );
-    await ffmpeg(
-      ["-y", "-ss", take.storyOffset.toFixed(3), "-i", take.webm, "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", story],
-      options.key ?? "",
-    );
     await ffmpeg(
       [
         "-y",
+        "-ss",
+        take.storyOffset.toFixed(3),
         "-i",
-        cold,
-        "-i",
-        story,
-        "-filter_complex",
-        "[0:v]scale=1440:900,setsar=1[a];[1:v]scale=1440:900,setsar=1[b];[a][b]concat=n=2:v=1:a=0,format=yuv420p",
+        take.webm,
         "-an",
         "-c:v",
         "libx264",
+        "-pix_fmt",
+        "yuv420p",
         "-movflags",
         "+faststart",
         finalPath,
@@ -74,7 +67,6 @@ async function recordTake(
   work: string,
 ): Promise<{
   webm: string;
-  waveOffset: number;
   storyOffset: number;
   reading: ReturnType<typeof readingFromAttributes>;
 }> {
@@ -100,31 +92,37 @@ async function recordTake(
     undefined,
     { timeout: options.mock ? 60_000 : 180_000 },
   );
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(200);
+  await setStory(page, "stream");
   const storyAt = Date.now();
   await assertPageHidesKey(page, options.mock ? "" : (options.key ?? ""));
-  await page.waitForTimeout(BEAT_MS);
-  const policy = page.getByTestId("relay-policy");
-  await policy.fill(RECORD_POLICY);
-  await page.waitForTimeout(AFTER_PASTE_MS);
+  await page.waitForTimeout(STREAM_MS);
+  await setStory(page, "judge");
+  await page.waitForTimeout(JUDGE_MS);
+  await setStory(page, "change");
+  await page.getByTestId("relay-policy").fill(RECORD_POLICY);
+  await page.waitForTimeout(CHANGE_MS);
   await page.getByTestId("relay-rejudge").click();
   await page.mouse.move(28, 28);
-  await page.waitForFunction(
-    () => {
-      const state = document.querySelector("[data-testid=relay-wave]")?.getAttribute("data-state");
-      return state === "playing" || state === "done";
-    },
-    undefined,
-    { timeout: options.mock ? 30_000 : 180_000 },
-  );
-  const waveAt = Date.now();
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await setStory(page, "wave");
   await page.waitForSelector('[data-testid="relay-wave"][data-state="done"]', { timeout: options.mock ? 30_000 : 180_000 });
   await page.waitForFunction(
     () => (document.querySelector("[data-testid=relay-metrics]")?.getAttribute("data-burst-size") ?? "") !== "",
     undefined,
     { timeout: 15_000 },
   );
-  await page.getByTestId("relay-stat-card").waitFor({ timeout: 15_000 });
+  await setStory(page, "examples");
+  await page.waitForFunction(
+    () => Number(document.querySelector("[data-testid=relay-highlights]")?.getAttribute("data-count") ?? "0") >= 1,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.waitForTimeout(EXAMPLES_MS);
+  await setStory(page, "card");
+  await page.getByTestId("relay-stat-card").waitFor({ timeout: 10_000 });
   await assertPageHidesKey(page, options.mock ? "" : (options.key ?? ""));
   assertHidden();
   const reading = readingFromAttributes(await readMetrics(page));
@@ -134,7 +132,7 @@ async function recordTake(
   if (!options.mock && (reading.p50LatencyMs == null || reading.p95LatencyMs == null)) {
     throw new Error("The live re-judge finished without round-trip percentiles.");
   }
-  await page.waitForTimeout(STAT_HOLD_MS);
+  await page.waitForTimeout(CARD_MS);
   const webm = path.join(work, "take.webm");
   const video = page.video();
   if (!video) throw new Error("Playwright did not start a video.");
@@ -143,10 +141,20 @@ async function recordTake(
   await context.close();
   return {
     webm,
-    waveOffset: Math.max(0, (waveAt - origin) / 1000 + 0.12),
-    storyOffset: Math.max(0, (storyAt - origin) / 1000 + 0.08),
+    storyOffset: Math.max(0, (storyAt - origin) / 1000 + 0.15),
     reading,
   };
+}
+
+async function setStory(page: Page, step: StoryStep) {
+  await page.evaluate((name) => {
+    window.dispatchEvent(new CustomEvent("relay-story", { detail: name }));
+  }, step);
+  await page.waitForFunction(
+    (name) => document.querySelector("[data-testid=relay-stage]")?.getAttribute("data-story") === name,
+    step,
+    { timeout: 5_000 },
+  );
 }
 
 async function readMetrics(page: Page) {

@@ -6,6 +6,12 @@ const SOLID: Record<RelayAction, string> = {
   revert: "#ff3b1f",
 };
 
+export const CHANGED_FILL = "#ff3b1f";
+
+export function flippedFill(action: RelayAction, markChanges: boolean): string {
+  return markChanges ? CHANGED_FILL : SOLID[action];
+}
+
 const HELD: Record<RelayAction, string> = {
   keep: "#173628",
   review: "#3a2c12",
@@ -38,9 +44,11 @@ export function paintRelayField(
     cells: readonly JudgedRow[];
     revealed: number;
     columns: number;
+    /** Bright red marks a verdict that changed, instead of the new action color. */
+    markChanges?: boolean;
   },
 ): void {
-  const { width, height, dpr, cells, revealed, columns } = options;
+  const { width, height, dpr, cells, revealed, columns, markChanges = false } = options;
   const cols = Math.max(1, columns);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
@@ -69,7 +77,7 @@ export function paintRelayField(
     if (failed) {
       fill = "#3a3632";
     } else if (tone === "flipped" && row.after) {
-      fill = SOLID[row.after];
+      fill = flippedFill(row.after, markChanges);
       rings.push({ x, y, w: cellW, h: cellH });
     } else if (tone === "unchanged" && row.before) {
       fill = HELD[row.before];

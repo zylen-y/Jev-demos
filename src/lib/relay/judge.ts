@@ -46,14 +46,19 @@ export function actionFromAnswers(answers: Record<string, Answer>): RelayAction 
   return "review";
 }
 
+/** Whole words, so "site selection" does not count as an election. */
+export function mentionsElection(title: string, summary = ""): boolean {
+  return /\b(elections?|elected|electoral|ballot|referendum)\b/i.test(`${title}\n${summary}`);
+}
+
 /** Local stand-in used only when the page is explicitly marked mocked. */
 export function mockAction(edit: WikiEdit, policy: string): RelayAction {
   const text = `${edit.title}\n${edit.summary}`.toLowerCase();
   const rule = policy.toLowerCase();
-  if (/mentions the election/.test(rule) && /election|elected|electoral|ballot|referendum/.test(text)) {
+  if (/mentions the election/.test(rule) && mentionsElection(text)) {
     return "revert";
   }
-  if (/revert edits whose summary says reverted/.test(rule) && /revert|category|election|score|died|wins|breaking|goal/.test(text)) {
+  if (/revert edits whose summary says reverted/.test(rule) && /\b(revert|category|elections?|score|died|wins|breaking|goal)\b/.test(text)) {
     return "revert";
   }
   if (/viagra|casino|buy now|seo service|click here/.test(text)) return "revert";

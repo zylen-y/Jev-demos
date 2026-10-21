@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { modelTimeFromHeaders } from "../jev/client";
-import { formatRelayUsd, percentile, summarizeRelay } from "./stats";
+import { formatRelayCents, formatRelayUsd, percentile, summarizeRelay } from "./stats";
 
 describe("relay stats", () => {
   it("ranks percentiles from measured samples only", () => {
@@ -22,6 +22,8 @@ describe("relay stats", () => {
     expect(summary.unpriced).toBe(1);
     expect(summary.p50UpstreamMs).toBe(140);
     expect(formatRelayUsd(summary.spendUsd)).toBe("$0.00005");
+    expect(formatRelayCents(0.04303)).toBe("$0.04");
+    expect(formatRelayCents(0.0867)).toBe("$0.09");
   });
 });
 
