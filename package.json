@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "semantic-lint": "tsx cli/semantic-lint.ts",
-    "record-relay": "tsx scripts/record-relay.ts"
+    "record:relay": "tsx scripts/record.ts relay",
+    "record:walkthrough": "tsx scripts/record.ts walkthrough"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.7.0",

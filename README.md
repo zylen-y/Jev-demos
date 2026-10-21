@@ -20,7 +20,8 @@ Open [http://localhost:3000](http://localhost:3000).
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
 | `npm test` | Vitest for the client, proxy, key storage, and decision logic |
-| `npm run record-relay -- --mock` | Labeled mock clip of the Relay wave. A live clip needs `TYPESAFE_API_KEY` |
+| `npm run record:relay` | Build, start, and record the Relay clip. Needs `TYPESAFE_API_KEY` |
+| `npm run record:walkthrough` | Build, start, and record the site walkthrough. Needs `TYPESAFE_API_KEY` |
 | `npm run semantic-lint -- <files>` | CLI that calls Jev. Needs `TYPESAFE_API_KEY` |
 
 Deploy on Vercel with no required environment variable. The browser key is not a server secret. Set `TYPESAFE_API_KEY` only if you want the GitHub Action or the CLI to call Jev in CI.
@@ -44,9 +45,40 @@ The [use-case map](https://docs.typesafe.ai/concepts/use-case-map) documents rea
 
 Re-judge sends that policy across the backlog. Once a decision exists, its cell can change color. The sweep runs top to bottom in 1.4 seconds and waits if a result is not in yet. That sweep is playback. Next to it is the wall clock from the click to the last response. Flipped cells are the new color with a light ring. Unchanged cells stay dim. Spend is the sum of reported input tokens at $0.042 per million.
 
-`?mock=1` is a labeled stand-in for review. The edits are still from Wikipedia. The decisions are a local rule, spend stays blank, and the page does not call Jev. `npm run record-relay -- --mock` writes a clip that opens on the sweep, then cuts back to the stream and the policy being typed. Without `--mock`, the recorder exits unless `TYPESAFE_API_KEY` is set. It does not invent a live take.
+`?mock=1` is a labeled stand-in for review. The edits are still from Wikipedia. The decisions are a local rule, spend stays blank, and the page does not call Jev. The live Relay clip is recorded on a machine that has the key. See [Recording](#recording).
 
 `/demos/realtime` redirects to `/relay`.
+
+## Recording
+
+Live clips are made on a machine that has the key. These two commands are the whole recording path: each one installs Playwright Chromium, builds the app, starts it at `http://127.0.0.1:4173`, drives the page, and writes the files.
+
+```bash
+npm run record:relay
+npm run record:walkthrough
+```
+
+`ffmpeg` and `ffprobe` need to be on `PATH`. The Playwright browser install is part of the command.
+
+The key comes from the `TYPESAFE_API_KEY` environment variable. The command reads it, stores it in `localStorage` before the first page load, and leaves every key field masked: the header button shows the first four and last four characters (`ts_l…hijk`), and the key dialog is a password field. Logs replace the key with `[redacted]`. The Next.js server and ffmpeg run without that variable, so the key is never printed and never typed into the page.
+
+Output goes to `recordings/`, which is gitignored.
+
+| File | Contents |
+| --- | --- |
+| `recordings/relay.mp4` | The flip wave in the first five seconds, then the stream and the policy being typed |
+| `recordings/relay.json` | `p50LatencyMs`, `p95LatencyMs`, `burstSize`, `burstDurationMs`, `spendUsd` |
+| `recordings/walkthrough.mp4` | Landing, gallery, one live demo call, the graph, Relay, then a 390px pass |
+| `recordings/walkthrough.json` | That demo call’s round trip as both percentiles, and its spend |
+
+On a live Relay pass, `p50LatencyMs` and `p95LatencyMs` are round trips, `burstDurationMs` is the wall clock from the re-judge click to the last response, and `spendUsd` is the sum of reported input tokens at $0.042 per million. The walkthrough records one demo call. The backlog burst stays in `relay.json`.
+
+`RECORD_MOCK=1` runs the same commands without calling Jev. Wikipedia edits stay live, decisions are labeled MOCKED, and the JSON leaves latency and spend null. A mock run still redacts `TYPESAFE_API_KEY` when that variable is set, and it does not put the key on the page.
+
+```bash
+RECORD_MOCK=1 npm run record:relay
+RECORD_MOCK=1 npm run record:walkthrough
+```
 
 ### What the proxy will not forward
 

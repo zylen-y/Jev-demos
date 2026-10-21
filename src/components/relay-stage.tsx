@@ -20,6 +20,7 @@ import {
   type JudgedRow,
   type RelayAction,
 } from "@/lib/relay/judge";
+import { metricDataAttributes, spendFromSummary, type MetricReading } from "@/lib/relay/metrics";
 import { columnsFor, paintRelayField } from "@/lib/relay/paint";
 import { formatRelayUsd, percentile, summarizeRelay, type RelaySample, type RelaySummary } from "@/lib/relay/stats";
 import { backfillWikipedia, editFromEvent, RELAY_BACKLOG, WIKI_STREAM_URL, type WikiEdit } from "@/lib/relay/wiki";
@@ -58,6 +59,7 @@ export function RelayStage() {
   const [arrived, setArrived] = useState(0);
   const [localPassMs, setLocalPassMs] = useState<number | null>(null);
   const [wallMs, setWallMs] = useState<number | null>(null);
+  const [measured, setMeasured] = useState<MetricReading | null>(null);
   const [ledger, setLedger] = useState({ stream: EMPTY_SUMMARY, rejudge: EMPTY_SUMMARY, modelP50: null as number | null });
 
   const cellsRef = useRef<Slot[]>([]);
@@ -298,7 +300,16 @@ export function RelayStage() {
         }));
         cellsRef.current = next;
         setCells(next);
-        setLocalPassMs(performance.now() - started);
+        const durationMs = performance.now() - started;
+        setLocalPassMs(durationMs);
+        setMeasured({
+          mock: true,
+          burstSize: next.length,
+          burstDurationMs: durationMs,
+          p50LatencyMs: null,
+          p95LatencyMs: null,
+          spendUsd: null,
+        });
         committedRef.current = policyText;
         beginWaveRef.current();
         return;
@@ -314,7 +325,17 @@ export function RelayStage() {
       await judgeMissing(cellsRef.current, "after", policyText, linked, false);
       flushPatches();
       if (linked.aborted || !aliveRef.current) return;
-      setWallMs(performance.now() - started);
+      const durationMs = performance.now() - started;
+      const summary = summarizeRelay(rejudgeSamplesRef.current);
+      setWallMs(durationMs);
+      setMeasured({
+        mock: false,
+        burstSize: cellsRef.current.length,
+        burstDurationMs: durationMs,
+        p50LatencyMs: summary.p50RoundTripMs,
+        p95LatencyMs: summary.p95RoundTripMs,
+        spendUsd: spendFromSummary(summary),
+      });
       committedRef.current = policyText;
       beginWaveRef.current();
     } catch (error) {
@@ -494,7 +515,26 @@ export function RelayStage() {
   const busy = phase === "loading" || phase === "judging" || phase === "playing";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#100e0c] text-[#efeae0]" data-mock={mock ? "1" : "0"} data-testid="relay-stage">
+    <div
+      className="fixed inset-0 z-50 flex flex-col bg-[#100e0c] text-[#efeae0]"
+      data-backlog={cells.length}
+      data-mock={mock ? "1" : "0"}
+      data-testid="relay-stage"
+    >
+      <div
+        className="sr-only"
+        data-testid="relay-metrics"
+        {...metricDataAttributes(
+          measured ?? {
+            mock,
+            burstSize: null,
+            burstDurationMs: null,
+            p50LatencyMs: null,
+            p95LatencyMs: null,
+            spendUsd: null,
+          },
+        )}
+      />
       <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2.5 sm:px-5">
         <div className="flex items-center gap-4">
           <Link className="serif text-xl leading-none" href="/">

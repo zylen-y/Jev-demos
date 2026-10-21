@@ -183,7 +183,13 @@ export function CallStrip({ calls, pending }: { calls: CallRecord[]; pending: bo
   const latest = calls[0];
   const spent = calls.reduce((sum, call) => sum + (call.costUsd ?? 0), 0);
   return (
-    <div className="rounded-2xl border border-line bg-card p-4">
+    <div
+      className="rounded-2xl border border-line bg-card p-4"
+      data-calls={calls.length}
+      data-latency-ms={latest ? String(Math.round(latest.latencyMs)) : ""}
+      data-spend-usd={latest?.costUsd == null ? "" : String(latest.costUsd)}
+      data-testid="call-metrics"
+    >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="mono text-[11px] uppercase tracking-[0.16em] text-muted">This call</p>
