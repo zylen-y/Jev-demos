@@ -1,0 +1,21 @@
+name: Jev semantic lint
+description: Flag semantic convention violations in code and writing with TypeSafe Jev.
+inputs:
+  files:
+    description: Space-separated file paths, relative to the repository root.
+    required: true
+  threshold:
+    description: Noul probability at or above which a check becomes a finding.
+    required: false
+    default: "0.6"
+  api-key:
+    description: TypeSafe API key. Pass it from a repository secret.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Semantic lint
+      shell: bash
+      env:
+        TYPESAFE_API_KEY: ${{ inputs.api-key }}
+      run: npx tsx cli/semantic-lint.ts --threshold "${{ inputs.threshold }}" ${{ inputs.files }}

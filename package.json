@@ -1,0 +1,41 @@
+{
+  "name": "jev-atlas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live demos of every use case on the TypeSafe map. Bring your own Jev API key.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "semantic-lint": "tsx cli/semantic-lint.ts",
+    "eval:relay": "tsx scripts/eval-relay-clause.ts",
+    "record:relay": "tsx scripts/record.ts relay",
+    "record:walkthrough": "tsx scripts/record.ts walkthrough"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.7.0",
+    "next": "^15.5.28",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.2",
+    "playwright": "^1.64.1",
+    "postcss": "^8.5.31",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
+  }
+}
