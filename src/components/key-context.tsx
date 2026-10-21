@@ -112,7 +112,7 @@ function KeyDialog() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center" role="presentation">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center p-4 sm:items-center" role="presentation">
       <button aria-label="Close API key dialog" className="absolute inset-0 bg-ink/40" onClick={close} type="button" />
       <div
         aria-labelledby="key-title"

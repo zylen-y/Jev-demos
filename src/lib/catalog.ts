@@ -74,13 +74,13 @@ export const DEMOS: DemoMeta[] = [
     kind: "category",
     title: "Relay",
     eyebrow: "Real-time applications",
-    summary: "A live switchboard. Jev routes each message as it arrives, and you can race it. Latency sits next to a 150ms reference.",
+    summary: "Live Wikipedia edits. Type a new policy and the backlog re-judges in a color wave, top to bottom.",
     industry: "Software",
     shapes: ["Detection", "Scoring", "Routing"],
     bullets: [
-      "One fan-out request per message, fast enough to drive a UI.",
-      "The round trip is measured and drawn against the 150ms model target.",
-      "Allow, warn, review, and block come from severity and confidence in code.",
+      "Each edit is one choice: keep, review, or revert.",
+      "A new policy re-judges the backlog. Flipped rows sweep from the top.",
+      "Round trip is measured. Model time appears only when a timing header reports it.",
     ],
   },
   {

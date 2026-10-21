@@ -5,6 +5,8 @@ import type { ModelCard, SystemOneRequest, SystemOneResponse } from "./types";
 export type PostedCall = {
   response: SystemOneResponse;
   latencyMs: number;
+  upstreamMs: number | null;
+  modelMs: number | null;
 };
 
 export async function postSystemOne(options: {
@@ -47,7 +49,19 @@ export async function postSystemOne(options: {
   if (!response.ok) {
     throw new JevCallError(response.status, messageForStatus(response.status, payload));
   }
-  return { response: parseSystemOneResponse(payload), latencyMs };
+  return {
+    response: parseSystemOneResponse(payload),
+    latencyMs,
+    upstreamMs: headerMs(response, "x-atlas-upstream-ms"),
+    modelMs: headerMs(response, "x-atlas-model-ms"),
+  };
+}
+
+function headerMs(response: Response, name: string): number | null {
+  const raw = response.headers.get(name);
+  if (raw == null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
 }
 
 export async function postModels(options: {

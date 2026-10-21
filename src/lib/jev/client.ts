@@ -27,6 +27,29 @@ export type EvaluateOptions = {
   baseURL?: string;
 };
 
+const modelTimes = new WeakMap<object, number | null>();
+
+/** Model duration from a Jev timing header, when the response included one. */
+export function modelMsFor(response: object): number | null {
+  return modelTimes.get(response) ?? null;
+}
+
+export function modelTimeFromHeaders(headers: Headers): number | null {
+  const serverTiming = headers.get("server-timing");
+  if (serverTiming) {
+    for (const part of serverTiming.split(",")) {
+      const name = part.split(";")[0]?.trim().toLowerCase() ?? "";
+      const match = /(?:^|;)\s*dur=(\d+(?:\.\d+)?)/i.exec(part);
+      if (!match) continue;
+      if (name === "model" || name === "inference" || name === "jev") {
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) return value;
+      }
+    }
+  }
+  return null;
+}
+
 export async function evaluateSystemOne(options: EvaluateOptions): Promise<SystemOneResponse> {
   const apiKey = options.apiKey.trim();
   if (!apiKey) {
@@ -42,12 +65,15 @@ export async function evaluateSystemOne(options: EvaluateOptions): Promise<Syste
     retry: options.maxRetries == null ? undefined : { maxRetries: options.maxRetries },
   });
   try {
-    const result = await client.systemOne(options.request as unknown as SdkRequest, {
+    const pending = client.systemOne(options.request as unknown as SdkRequest, {
       signal: options.signal,
       timeout: options.timeoutMs,
       retry: options.maxRetries == null ? undefined : { maxRetries: options.maxRetries },
     });
-    return parseSystemOneResponse(result);
+    const wrapped = await pending.withResponse();
+    const response = parseSystemOneResponse(wrapped.data);
+    modelTimes.set(response, modelTimeFromHeaders(wrapped.response.headers));
+    return response;
   } catch (error) {
     throw toJevCallError(error, apiKey);
   }

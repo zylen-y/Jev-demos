@@ -113,7 +113,7 @@ function FilterRow({
 
 function DemoCard({ demo, index }: { demo: DemoMeta; index: number }) {
   return (
-    <Link className="flex h-full flex-col rounded-3xl border border-line bg-card p-5" href={`/demos/${demo.slug}`}>
+    <Link className="flex h-full flex-col rounded-3xl border border-line bg-card p-5" href={demo.slug === "realtime" ? "/relay" : `/demos/${demo.slug}`}>
       <div className="flex items-center justify-between gap-3">
         <p className="mono text-[11px] uppercase tracking-[0.16em] text-muted">{demo.industry}</p>
         <p className="mono text-[11px] text-muted">{String(index + 1).padStart(2, "0")}</p>

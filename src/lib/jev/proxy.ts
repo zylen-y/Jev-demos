@@ -1,4 +1,4 @@
-import { evaluateSystemOne, listModels } from "./client";
+import { evaluateSystemOne, listModels, modelMsFor } from "./client";
 import { JevCallError, redactSecret } from "./errors";
 import { validateSystemOneBody } from "./validate";
 
@@ -17,7 +17,7 @@ export async function proxySystemOne(options: {
   timeoutMs?: number;
   maxRetries?: number;
   evaluate?: typeof evaluateSystemOne;
-}): Promise<{ status: number; body: unknown }> {
+}): Promise<{ status: number; body: unknown; upstreamMs?: number; modelMs?: number | null }> {
   const apiKey = readBearer(options.authorization);
   if (!apiKey) {
     return {
@@ -42,6 +42,7 @@ export async function proxySystemOne(options: {
   const maxRetries = clampNumber(options.maxRetries, 0, 2, 2);
   try {
     const evaluate = options.evaluate ?? evaluateSystemOne;
+    const started = performance.now();
     const response = await evaluate({
       apiKey,
       request: validation.request,
@@ -49,7 +50,9 @@ export async function proxySystemOne(options: {
       timeoutMs,
       maxRetries,
     });
-    return { status: 200, body: response };
+    const upstreamMs = performance.now() - started;
+    const modelMs = typeof modelMsFor === "function" ? modelMsFor(response) : null;
+    return { status: 200, body: response, upstreamMs, modelMs };
   } catch (error) {
     const status = error instanceof JevCallError ? error.status : 500;
     const message = error instanceof Error ? error.message : "The Jev call failed.";

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { DemoExperience } from "@/components/demo-experience";
 import { DEMOS, getDemo } from "@/lib/catalog";
 
@@ -18,6 +18,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function Page({ params }: Props) {
   const { slug } = await params;
+  if (slug === "realtime") redirect("/relay");
   if (!getDemo(slug)) notFound();
   return <DemoExperience slug={slug} />;
 }

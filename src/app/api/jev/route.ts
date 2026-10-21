@@ -11,7 +11,14 @@ export async function POST(req: Request) {
     timeoutMs: headerNumber(req.headers.get("x-atlas-timeout-ms")),
     maxRetries: headerNumber(req.headers.get("x-atlas-max-retries")),
   });
-  return Response.json(result.body, { status: result.status });
+  const headers = new Headers();
+  if (result.upstreamMs != null && Number.isFinite(result.upstreamMs)) {
+    headers.set("x-atlas-upstream-ms", String(Math.round(result.upstreamMs)));
+  }
+  if (result.modelMs != null && Number.isFinite(result.modelMs)) {
+    headers.set("x-atlas-model-ms", String(Math.round(result.modelMs)));
+  }
+  return Response.json(result.body, { status: result.status, headers });
 }
 
 function headerNumber(value: string | null): number | undefined {

@@ -20,6 +20,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
 | `npm test` | Vitest for the client, proxy, key storage, and decision logic |
+| `npm run record-relay -- --mock` | Labeled mock clip of the Relay wave. A live clip needs `TYPESAFE_API_KEY` |
 | `npm run semantic-lint -- <files>` | CLI that calls Jev. Needs `TYPESAFE_API_KEY` |
 
 Deploy on Vercel with no required environment variable. The browser key is not a server secret. Set `TYPESAFE_API_KEY` only if you want the GitHub Action or the CLI to call Jev in CI.
@@ -35,7 +36,17 @@ The browser does not call `api.typesafe.ai` directly. An `OPTIONS` preflight fro
 
 Every demo measures the round trip and prices input tokens at **$0.042 per million** (`$42/Btok`, also written `$0.042` per Mtok, on [the models page](https://docs.typesafe.ai/models)). Output tokens are free. Docs do not publish a per-call price, so the site does not invent one. A chars/4 figure shown before a call is an estimate. Requests use the alias `jev-latest`. The response `model` field is the resolved version.
 
-The [use-case map](https://docs.typesafe.ai/concepts/use-case-map) documents real-time decisions at 150 ms and describes this class of work as 100x cheaper. The latency drawn on each demo is the measured round trip through this app and the network, set against that 150 ms mark. Relay turns retries off so that bar is one attempt.
+The [use-case map](https://docs.typesafe.ai/concepts/use-case-map) documents real-time decisions at 150 ms and describes this class of work as 100x cheaper. The latency drawn on each demo is the measured round trip through this app and the network, set against that 150 ms mark. Relay does not use that figure as its claim. It shows the round trip beside model time, and model time only when a response timing header names `model`, `inference`, or `jev`. Relay turns retries off so each judgment is one attempt.
+
+## Relay
+
+`/relay` loads the latest English Wikipedia edits (up to 2,400) and subscribes to the public Wikimedia recent-changes stream at `https://stream.wikimedia.org/v2/stream/recentchange`. Each line is the page title, the wiki, and the edit summary. With a key in the browser, a judgment is one System One choice: keep, review, or revert, under the policy in the box.
+
+Re-judge sends that policy across the backlog. Once a decision exists, its cell can change color. The sweep runs top to bottom in 1.4 seconds and waits if a result is not in yet. That sweep is playback. Next to it is the wall clock from the click to the last response. Flipped cells are the new color with a light ring. Unchanged cells stay dim. Spend is the sum of reported input tokens at $0.042 per million.
+
+`?mock=1` is a labeled stand-in for review. The edits are still from Wikipedia. The decisions are a local rule, spend stays blank, and the page does not call Jev. `npm run record-relay -- --mock` writes a clip that opens on the sweep, then cuts back to the stream and the policy being typed. Without `--mock`, the recorder exits unless `TYPESAFE_API_KEY` is set. It does not invent a live take.
+
+`/demos/realtime` redirects to `/relay`.
 
 ### What the proxy will not forward
 
@@ -79,7 +90,7 @@ Gallery filters: industry, decision shape, and category versus use case. Each ca
 | Demo | Path | Decision shapes |
 | --- | --- | --- |
 | Code owns the branch | `/demos/automation` | Classification, Detection, Scoring, Routing |
-| Relay | `/demos/realtime` | Detection, Scoring, Routing |
+| Relay | `/relay` | Detection, Scoring, Routing |
 | Trace foundry | `/demos/map-reduce` | Classification, Detection, Search |
 | Check the other model | `/demos/universal-verification` | Verification, Detection, Classification |
 | Harness bench | `/demos/harness` | Routing, Retrieval, Scoring, Verification, Classification, Detection |

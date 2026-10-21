@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/jev/client", () => ({
   evaluateSystemOne: vi.fn(),
   listModels: vi.fn(),
+  modelMsFor: () => null,
 }));
 
 import { evaluateSystemOne } from "@/lib/jev/client";
@@ -41,6 +42,8 @@ describe("POST /api/jev", () => {
   it("keeps the 20s timeout and 2 retries when the atlas headers are absent", async () => {
     const response = await call();
     expect(response.status).toBe(200);
+    expect(Number(response.headers.get("x-atlas-upstream-ms"))).toBeGreaterThanOrEqual(0);
+    expect(response.headers.get("x-atlas-model-ms")).toBeNull();
     expect(evaluate).toHaveBeenCalledOnce();
     const options = evaluate.mock.calls[0][0];
     expect(options.timeoutMs).toBe(20_000);

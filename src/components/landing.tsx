@@ -63,7 +63,11 @@ export function Landing() {
             const demo = DEMOS.find((item) => item.eyebrow === category.title || item.slug === category.id || (category.id === "verification" && item.slug === "universal-verification"));
             const href = `/demos/${category.id === "verification" ? "universal-verification" : category.id === "map-reduce" ? "map-reduce" : category.id}`;
             return (
-              <Link className="rounded-3xl border border-line bg-card p-6 transition hover:-translate-y-0.5" href={demo ? `/demos/${demo.slug}` : href} key={category.id}>
+              <Link
+                className="rounded-3xl border border-line bg-card p-6 transition hover:-translate-y-0.5"
+                href={demo?.slug === "realtime" ? "/relay" : demo ? `/demos/${demo.slug}` : href}
+                key={category.id}
+              >
                 <p className="mono text-[11px] uppercase tracking-[0.16em] text-muted">0{index + 1}</p>
                 <h3 className="serif mt-3 text-3xl">{category.title}</h3>
                 <p className="mt-3 text-sm leading-6 text-muted">{category.body}</p>
