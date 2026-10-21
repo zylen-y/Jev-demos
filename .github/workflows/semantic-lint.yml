@@ -1,0 +1,33 @@
+name: Semantic lint
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  jev-semantic-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check for a key
+        id: gate
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "TYPESAFE_API_KEY is not set. Add it as a repository secret to run semantic lint."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Jev semantic lint
+        if: steps.gate.outputs.skip != 'true'
+        uses: ./.github/actions/jev-semantic-lint
+        with:
+          files: examples/clean-module.ts examples/release-note.md
+          api-key: ${{ secrets.TYPESAFE_API_KEY }}
