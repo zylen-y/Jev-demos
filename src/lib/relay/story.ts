@@ -61,40 +61,43 @@ function dedupeTitles<T extends FlipRow>(rows: readonly T[]): T[] {
   return kept;
 }
 
-/** Edits in the revealed prefix that the election rule newly reverts. */
+/** Edits in the revealed prefix whose verdict flipped to revert. One edit, one count. */
 export function countRuleReverts<T extends FlipRow>(rows: readonly T[], revealed: number): number {
   const end = Math.min(rows.length, Math.max(0, Math.floor(revealed)));
   let count = 0;
   for (let index = 0; index < end; index += 1) {
     const row = rows[index];
-    if (!row || !toRevert(row) || !mentionsElection(row.edit.title, row.edit.summary)) continue;
+    if (!row || !toRevert(row)) continue;
     count += 1;
   }
   return count;
 }
 
-/** Revealed election → REVERT rows, one card per page title. Other churn stays off this list. */
+/** Revealed flips to revert, one card per page title, newest first. */
 export function pickRuleFlips<T extends FlipRow>(rows: readonly T[], revealed: number, limit: number): T[] {
   const end = Math.min(rows.length, Math.max(0, Math.floor(revealed)));
-  const ranked: { row: T; index: number; rank: number }[] = [];
+  const ranked: { row: T; index: number }[] = [];
   for (let index = 0; index < end; index += 1) {
     const row = rows[index];
-    if (!row || !toRevert(row) || !mentionsElection(row.edit.title, row.edit.summary)) continue;
-    const titled = mentionsElection(row.edit.title, "");
-    ranked.push({ row, index, rank: titled ? 2 : 1 });
+    if (!row || !toRevert(row)) continue;
+    ranked.push({ row, index });
   }
-  ranked.sort((a, b) => b.rank - a.rank || b.index - a.index);
+  ranked.sort((a, b) => b.index - a.index);
   return dedupeTitles(ranked.map((item) => item.row)).slice(0, Math.max(0, limit));
 }
 
-/** The held examples. Election → REVERT wins when at least two of those exist. */
+/**
+ * Cards for the example beat. Among flips to revert, a title that mentions an
+ * election is easier to read, so those lead when at least two exist. That
+ * preference only chooses which cards to show.
+ */
 export function pickShowcase<T extends FlipRow>(rows: readonly T[], revealed: number, limit: number): T[] {
-  const ranked = pickRuleFlips(rows, revealed, rows.length);
-  const titled = ranked.filter((row) => toRevert(row) && mentionsElection(row.edit.title, ""));
+  const pool = pickRuleFlips(rows, revealed, rows.length);
+  const titled = pool.filter((row) => mentionsElection(row.edit.title, ""));
   if (titled.length >= 2) return titled.slice(0, limit);
-  const matching = ranked.filter((row) => toRevert(row) && mentionsElection(row.edit.title, row.edit.summary));
+  const matching = pool.filter((row) => mentionsElection(row.edit.title, row.edit.summary));
   if (matching.length >= 2) return matching.slice(0, limit);
-  return ranked.slice(0, limit);
+  return pool.slice(0, limit);
 }
 
 function readableArticle(title: string): boolean {

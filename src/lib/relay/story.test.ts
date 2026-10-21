@@ -52,11 +52,16 @@ describe("rule flips", () => {
       row("2026 United States Senate election in Ohio", "keep", "revert"),
       row("Linen", "keep", "revert"),
     ];
+    expect(pickRuleFlips(repeated, repeated.length, 4).map((item) => item.edit.title)).toEqual([
+      "Linen",
+      "2026 United States Senate election in Ohio",
+      "2026 United States Senate election in Montana",
+    ]);
     expect(pickShowcase(repeated, repeated.length, 3).map((item) => item.edit.title)).toEqual([
       "2026 United States Senate election in Ohio",
       "2026 United States Senate election in Montana",
     ]);
-    expect(countRuleReverts(repeated, repeated.length)).toBe(3);
+    expect(countRuleReverts(repeated, repeated.length)).toBe(4);
     expect(sampleVerdict([
       { before: "keep" as const, edit: { title: "File:Cat.jpg" } },
       { before: "keep" as const, edit: { title: "Q1088552" } },
