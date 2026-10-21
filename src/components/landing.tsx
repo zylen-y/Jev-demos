@@ -7,14 +7,25 @@ export function Landing() {
   const useCases = DEMOS.filter((demo) => demo.kind === "use-case");
   return (
     <main>
-      <section className="mx-auto grid max-w-6xl items-end gap-10 px-5 pb-8 pt-14 lg:grid-cols-[1.2fr_0.8fr]">
+      <section className="mx-auto grid max-w-6xl items-end gap-8 px-5 pb-8 pt-6 lg:grid-cols-[1.2fr_0.8fr] lg:gap-10 lg:pt-14">
         <div className="rise">
           <p className="mono text-[11px] uppercase tracking-[0.2em] text-muted">TypeSafe · System One · Jev</p>
-          <h1 className="serif mt-4 text-[clamp(3.2rem,7vw,6.4rem)] leading-[0.9] tracking-tight">
+          <h1 className="serif mt-3 text-[clamp(2.6rem,11vw,6.4rem)] leading-[0.92] tracking-tight lg:mt-4">
             Every decision on the map, <span className="italic text-vermilion">in {MODEL_TARGET_MS}&nbsp;ms.</span>
           </h1>
-          <p className="mt-6 max-w-xl text-lg leading-8 text-muted">
-            <span className="text-ink">${INPUT_USD_PER_MILLION} per million input tokens.</span> Output tokens are free, and the use-case map calls that 100x cheaper. Paste your Jev key and run classification, detection, scoring, routing, search, verification, and the rest on sample data or your own.
+          <dl className="mt-5 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-line bg-card px-4 py-3">
+              <dt className="text-[11px] uppercase tracking-[0.14em] text-muted">Real-time speed</dt>
+              <dd className="mono mt-1 text-3xl">{MODEL_TARGET_MS} ms</dd>
+            </div>
+            <div className="rounded-2xl border border-line bg-card px-4 py-3">
+              <dt className="text-[11px] uppercase tracking-[0.14em] text-muted">Input price</dt>
+              <dd className="mono mt-1 text-3xl">${INPUT_USD_PER_MILLION}</dd>
+              <dd className="mt-1 text-xs text-muted">per million tokens</dd>
+            </div>
+          </dl>
+          <p className="mt-5 max-w-xl text-lg leading-8 text-muted">
+            Output tokens are free, and the use-case map calls that 100x cheaper. Paste your Jev key and run classification, detection, scoring, routing, search, verification, and the rest on sample data or your own.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link className="rounded-full bg-ink px-5 py-3 text-sm text-paper" href="/gallery">
@@ -100,13 +111,24 @@ function Instrument() {
     ["sales", 0.05],
   ];
   return (
-    <aside className="rise rounded-3xl border border-line bg-card p-5 shadow-[0_20px_60px_rgb(23_22_15/0.06)]" style={{ animationDelay: "120ms" }}>
+      <aside className="rise rounded-3xl border border-line bg-card p-5 shadow-[0_20px_60px_rgb(23_22_15/0.06)]" style={{ animationDelay: "120ms" }}>
       <div className="flex items-center justify-between">
         <p className="mono text-[11px] uppercase tracking-[0.16em] text-muted">Interface preview</p>
-        <p className="mono text-[11px] text-muted">preview</p>
+        <p className="mono text-[11px] text-muted">sample, not a live call</p>
       </div>
-      <p className="serif mt-4 text-3xl leading-none">Department</p>
-      <p className="mt-2 text-sm text-muted">A choice distribution, the way a live demo draws one.</p>
+      <dl className="mt-4 grid grid-cols-2 gap-3">
+        <div>
+          <dt className="text-[11px] uppercase tracking-[0.14em] text-muted">Real-time speed</dt>
+          <dd className="mono mt-1 text-2xl">{MODEL_TARGET_MS} ms</dd>
+        </div>
+        <div>
+          <dt className="text-[11px] uppercase tracking-[0.14em] text-muted">Input price</dt>
+          <dd className="mono mt-1 text-2xl">${INPUT_USD_PER_MILLION}</dd>
+          <dd className="text-xs text-muted">per million tokens</dd>
+        </div>
+      </dl>
+      <p className="serif mt-5 text-3xl leading-none">Department</p>
+      <p className="mt-2 text-sm text-muted">A sample choice distribution, drawn here so the page has a shape. It is not a Jev response.</p>
       <div className="mt-5 space-y-3">
         {rows.map(([label, value], index) => (
           <div key={label}>
@@ -120,20 +142,6 @@ function Instrument() {
           </div>
         ))}
       </div>
-      <div className="mt-5 grid grid-cols-3 gap-3 border-t border-line pt-4">
-        <Stat label="Confidence" value="0.79" />
-        <Stat label="Target" value={`${MODEL_TARGET_MS} ms`} />
-        <Stat label="Input" value={`$${INPUT_USD_PER_MILLION}/Mtok`} />
-      </div>
     </aside>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[11px] uppercase tracking-[0.14em] text-muted">{label}</p>
-      <p className="mono mt-1 text-sm">{value}</p>
-    </div>
   );
 }

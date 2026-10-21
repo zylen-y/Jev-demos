@@ -87,6 +87,11 @@ export function GraphDemo() {
           <ErrorNote message={jev.error} />
         </section>
         <section className="rounded-3xl border border-line bg-card p-3">
+          <p className="px-2 pb-2 text-sm text-muted">
+            {edges.length
+              ? "Classified by Jev. Drag a node to rearrange."
+              : "Sample links from the loaded packet, drawn before any call. Run Annotate to classify each edge."}
+          </p>
           <svg
             className="h-auto w-full touch-none"
             onPointerMove={(event) => {
@@ -111,7 +116,7 @@ export function GraphDemo() {
               const onPath = path?.path.includes(edge.source) && path.path.includes(edge.target);
               return (
                 <g key={edge.id}>
-                  <line stroke={onPath ? "#e23b16" : "#17160f"} strokeOpacity={view ? 0.35 + view.p * 0.6 : 0.25} strokeWidth={onPath ? 3 : 1.4} x1={source.x} x2={target.x} y1={source.y} y2={target.y} />
+                  <line stroke={onPath ? "#e23b16" : "#17160f"} strokeOpacity={view ? 0.45 + view.p * 0.55 : 0.85} strokeWidth={onPath ? 3 : 2.2} x1={source.x} x2={target.x} y1={source.y} y2={target.y} />
                   {view ? (
                     <text fill="#5f5a50" fontSize="11" textAnchor="middle" x={(source.x + target.x) / 2} y={(source.y + target.y) / 2 - 8}>
                       {view.label} {formatPct(view.p, 0)}

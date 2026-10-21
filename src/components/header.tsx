@@ -10,9 +10,7 @@ export function SiteHeader() {
           <span className="serif text-xl leading-none">Jev Atlas</span>
         </Link>
         <nav className="flex items-center gap-4 text-sm">
-          <Link className="hidden sm:inline" href="/gallery">
-            Gallery
-          </Link>
+          <Link href="/gallery">Gallery</Link>
           <a className="hidden md:inline" href="https://docs.typesafe.ai/concepts/use-case-map">
             Use-case map
           </a>
