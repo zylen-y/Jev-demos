@@ -12,12 +12,6 @@ const HELD: Record<RelayAction, string> = {
   revert: "#4a1c16",
 };
 
-const WAIT: Record<RelayAction, string> = {
-  keep: "#101c16",
-  review: "#1a150e",
-  revert: "#1a100e",
-};
-
 export function fieldGaps(width: number): { x: number; y: number } {
   if (width < 700) return { x: 1, y: 1.5 };
   return { x: 1.5, y: 3 };
@@ -81,7 +75,7 @@ export function paintRelayField(
       fill = HELD[row.before];
       inset = Math.min(cellW, cellH) * 0.2;
     } else if (row.before) {
-      fill = WAIT[row.before];
+      fill = SOLID[row.before];
     }
     ctx.beginPath();
     ctx.roundRect(x + inset, y + inset, Math.max(0.5, cellW - inset * 2), Math.max(0.5, cellH - inset * 2), radius);

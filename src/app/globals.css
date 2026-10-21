@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--font-outfit), "Outfit", sans-serif;
+  --font-sans: var(--font-outfit), "Outfit", "Noto Sans", "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans CJK KR", "Noto Sans CJK TC", sans-serif;
   --font-serif: var(--font-newsreader), "Newsreader", serif;
   --font-mono: var(--font-plex), "IBM Plex Mono", ui-monospace, monospace;
   --color-paper: #efeae0;

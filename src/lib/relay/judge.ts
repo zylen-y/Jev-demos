@@ -12,7 +12,13 @@ export const DEFAULT_POLICY =
 export const REJUDGE_POLICY =
   "Revert edits whose summary says reverted, or that mention a category, a sports result, an election, or breaking news. Keep typo and citation fixes.";
 
+/** Short rule the recorder pastes. A viewer can read it in one glance. */
+export const RECORD_POLICY = "Revert anything that mentions the election";
+
 export const WAVE_MS = 1400;
+
+/** Mocked re-judge only. Live rows flip as responses land, so they do not use this clock. */
+export const MOCK_PLAYBACK_MS = 4000;
 
 export function relayRequest(edit: WikiEdit, policy: string): SystemOneRequest {
   return request(
@@ -44,6 +50,9 @@ export function actionFromAnswers(answers: Record<string, Answer>): RelayAction 
 export function mockAction(edit: WikiEdit, policy: string): RelayAction {
   const text = `${edit.title}\n${edit.summary}`.toLowerCase();
   const rule = policy.toLowerCase();
+  if (/mentions the election/.test(rule) && /election|elected|electoral|ballot|referendum/.test(text)) {
+    return "revert";
+  }
   if (/revert edits whose summary says reverted/.test(rule) && /revert|category|election|score|died|wins|breaking|goal/.test(text)) {
     return "revert";
   }

@@ -2,14 +2,13 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Browser, Page } from "playwright";
-import { REJUDGE_POLICY } from "../src/lib/relay/judge";
+import { RECORD_POLICY } from "../src/lib/relay/judge";
 import { measuredRecording, readingFromAttributes } from "../src/lib/relay/metrics";
 import { assertPageHidesKey, duration, ensureDir, ffmpeg, launchBrowser, seedKey, watchForKey } from "./record-support";
 
-const WATCH_MS = 10_000;
-const TYPE_DELAY_MS = 32;
-const AFTER_TYPE_MS = 1_000;
-const LINGER_MS = 11_000;
+const BEAT_MS = 200;
+const AFTER_PASTE_MS = 700;
+const STAT_HOLD_MS = 17_000;
 
 export async function recordRelay(options: { baseURL: string; mock: boolean; key?: string; outDir: string }): Promise<void> {
   await ensureDir(options.outDir);
@@ -58,8 +57,8 @@ export async function recordRelay(options: { baseURL: string; mock: boolean; key
     await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
     const seconds = await duration(finalPath);
     console.log(`Wrote ${finalPath} (${seconds.toFixed(1)}s) and ${jsonPath}.`);
-    if (options.mock && (seconds < 30 || seconds > 45)) {
-      throw new Error(`The mock Relay clip is ${seconds.toFixed(1)}s. It needs to land between 30 and 45 seconds.`);
+    if (options.mock && (seconds < 30 || seconds > 40)) {
+      throw new Error(`The mock Relay clip is ${seconds.toFixed(1)}s. It needs to land between 30 and 40 seconds.`);
     }
     if (!options.mock && seconds < 5) {
       throw new Error("The Relay clip is too short to include the wave.");
@@ -89,35 +88,43 @@ async function recordTake(
   const page = await context.newPage();
   const assertHidden = watchForKey(page, options.mock ? "" : (options.key ?? ""));
   const origin = Date.now();
-  const storyUrl = options.mock ? "/relay?mock=1" : "/relay";
+  const storyUrl = options.mock ? "/relay?mock=1&present=1" : "/relay?present=1";
   await page.goto(`${options.baseURL}${storyUrl}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForFunction(
-    () => Number(document.querySelector("[data-testid=relay-stage]")?.getAttribute("data-backlog") ?? "0") >= 500,
-    { timeout: 60_000 },
+    () => {
+      const stage = document.querySelector("[data-testid=relay-stage]");
+      const backlog = Number(stage?.getAttribute("data-backlog") ?? "0");
+      const ready = stage?.getAttribute("data-phase") !== "loading" && stage?.getAttribute("data-baseline") === "1";
+      return backlog >= 500 && ready;
+    },
+    undefined,
+    { timeout: options.mock ? 60_000 : 180_000 },
   );
+  await page.waitForTimeout(350);
   const storyAt = Date.now();
   await assertPageHidesKey(page, options.mock ? "" : (options.key ?? ""));
-  await page.waitForTimeout(WATCH_MS);
+  await page.waitForTimeout(BEAT_MS);
   const policy = page.getByTestId("relay-policy");
-  await policy.click();
-  await page.keyboard.press("Control+A");
-  await page.keyboard.press("Backspace");
-  await policy.pressSequentially(REJUDGE_POLICY, { delay: TYPE_DELAY_MS });
-  await page.waitForTimeout(AFTER_TYPE_MS);
+  await policy.fill(RECORD_POLICY);
+  await page.waitForTimeout(AFTER_PASTE_MS);
   await page.getByTestId("relay-rejudge").click();
+  await page.mouse.move(28, 28);
   await page.waitForFunction(
     () => {
       const state = document.querySelector("[data-testid=relay-wave]")?.getAttribute("data-state");
       return state === "playing" || state === "done";
     },
-    { timeout: options.mock ? 30_000 : 1_200_000 },
+    undefined,
+    { timeout: options.mock ? 30_000 : 180_000 },
   );
   const waveAt = Date.now();
-  await page.waitForSelector('[data-testid="relay-wave"][data-state="done"]', { timeout: options.mock ? 30_000 : 1_200_000 });
+  await page.waitForSelector('[data-testid="relay-wave"][data-state="done"]', { timeout: options.mock ? 30_000 : 180_000 });
   await page.waitForFunction(
     () => (document.querySelector("[data-testid=relay-metrics]")?.getAttribute("data-burst-size") ?? "") !== "",
+    undefined,
     { timeout: 15_000 },
   );
+  await page.getByTestId("relay-stat-card").waitFor({ timeout: 15_000 });
   await assertPageHidesKey(page, options.mock ? "" : (options.key ?? ""));
   assertHidden();
   const reading = readingFromAttributes(await readMetrics(page));
@@ -127,7 +134,7 @@ async function recordTake(
   if (!options.mock && (reading.p50LatencyMs == null || reading.p95LatencyMs == null)) {
     throw new Error("The live re-judge finished without round-trip percentiles.");
   }
-  await page.waitForTimeout(LINGER_MS);
+  await page.waitForTimeout(STAT_HOLD_MS);
   const webm = path.join(work, "take.webm");
   const video = page.video();
   if (!video) throw new Error("Playwright did not start a video.");
@@ -136,8 +143,8 @@ async function recordTake(
   await context.close();
   return {
     webm,
-    waveOffset: Math.max(0, (waveAt - origin) / 1000 - 0.15),
-    storyOffset: Math.max(0, (storyAt - origin) / 1000 - 0.15),
+    waveOffset: Math.max(0, (waveAt - origin) / 1000 + 0.12),
+    storyOffset: Math.max(0, (storyAt - origin) / 1000 + 0.08),
     reading,
   };
 }

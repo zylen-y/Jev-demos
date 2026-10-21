@@ -33,6 +33,7 @@ export async function recordWalkthrough(options: { baseURL: string; mock: boolea
       await page.getByRole("button", { name: "Run live" }).click();
       await page.waitForFunction(
         () => Number(document.querySelector("[data-testid=call-metrics]")?.getAttribute("data-calls") ?? "0") >= 1,
+        undefined,
         { timeout: 90_000 },
       );
       call = await page.locator("[data-testid=call-metrics]").evaluate((node) => ({
@@ -41,18 +42,30 @@ export async function recordWalkthrough(options: { baseURL: string; mock: boolea
         calls: node.getAttribute("data-calls") ?? "0",
       }));
       await assertPageHidesKey(page, secret);
-      await page.waitForTimeout(2_500);
+      await page.waitForTimeout(6_500);
       await page.getByRole("banner").getByRole("link", { name: "Gallery" }).click();
     }
     await page.getByRole("heading", { name: "Graphs and knowledge graphs", exact: true }).click();
     await page.getByText("Sample links from the loaded packet").waitFor();
     await assertPageHidesKey(page, secret);
     await page.waitForTimeout(4_000);
-    await page.getByRole("banner").getByRole("link", { name: "Relay" }).click();
+    if (options.mock) {
+      // The header link is /relay. A mock pass opens the labeled stand-in so the grid is already judged.
+      await page.goto(`${options.baseURL}/relay?mock=1`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    } else {
+      await page.getByRole("banner").getByRole("link", { name: "Relay" }).click();
+    }
     await page.getByTestId("relay-stage").waitFor();
     await page.waitForFunction(
-      () => Number(document.querySelector("[data-testid=relay-stage]")?.getAttribute("data-backlog") ?? "0") >= 100,
-      { timeout: 60_000 },
+      () => {
+        const stage = document.querySelector("[data-testid=relay-stage]");
+        const backlog = Number(stage?.getAttribute("data-backlog") ?? "0");
+        const settled = stage?.getAttribute("data-baseline") === "1" && stage?.getAttribute("data-phase") !== "loading";
+        const decided = Number(stage?.getAttribute("data-decided") ?? "0");
+        return backlog >= 100 && settled && decided >= Math.min(backlog, 100);
+      },
+      undefined,
+      { timeout: options.mock ? 60_000 : 180_000 },
     );
     await assertPageHidesKey(page, secret);
     await page.waitForTimeout(4_000);

@@ -21,7 +21,7 @@ import { forceLayout, mostProbablePath } from "./graph";
 import { maskApiKey, readStoredKey, writeStoredKey, API_KEY_STORAGE_KEY } from "./key";
 import { buildLintRequest, interpretLint } from "./lint/rules";
 import { binaryMetrics, forwardSelect, lift, splitIndexes, trainLogistic } from "./ml";
-import { mapPool } from "./pool";
+import { createLimiter, mapPool } from "./pool";
 import { pairwiseReorder, selectContext } from "./rank";
 import { caseDemos, SPECIAL_SLUGS } from "./demos/registry";
 import { thresholdDefaults } from "./demos/types";
@@ -227,6 +227,24 @@ describe("ml, forecast, rank, graph, pool, corpus, lint, key", () => {
     });
     expect(maxActive).toBeLessThanOrEqual(2);
     expect(results).toEqual([2, 4, 6, 8, 10, 12]);
+  });
+
+  it("shares one limiter across overlapping batches", async () => {
+    const limit = createLimiter(2);
+    let active = 0;
+    let maxActive = 0;
+    await Promise.all(
+      [1, 2, 3, 4].map((item) =>
+        limit(async () => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active -= 1;
+          return item;
+        }),
+      ),
+    );
+    expect(maxActive).toBeLessThanOrEqual(2);
   });
 
   it("generates two thousand labeled traces", () => {

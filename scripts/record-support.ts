@@ -11,6 +11,7 @@ export async function withRecordingApp(secret: string, run: (baseURL: string) =>
   const env = withoutKey(process.env);
   await assertTool("ffmpeg");
   await assertTool("ffprobe");
+  await ensureFonts(env);
   console.log("Installing Playwright Chromium.");
   await runCommand(process.execPath, [playwrightCli, "install", "chromium"], env, secret);
   console.log("Building the app.");
@@ -148,6 +149,40 @@ function runCommand(command: string, args: string[], env: NodeJS.ProcessEnv, sec
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureFonts(env: NodeJS.ProcessEnv): Promise<void> {
+  if (await fontsReady()) {
+    console.log("Noto fonts, including CJK, are already installed.");
+    return;
+  }
+  console.log("Installing Noto Sans and Noto Sans CJK.");
+  const packages = ["fonts-noto-core", "fonts-noto-cjk"];
+  const update = ["apt-get", "update"];
+  const install = ["apt-get", "install", "-y", ...packages];
+  try {
+    await runCommand("sudo", ["-n", ...update], env, "");
+    await runCommand("sudo", ["-n", ...install], env, "");
+  } catch {
+    await runCommand("apt-get", update, env, "");
+    await runCommand("apt-get", install, env, "");
+  }
+  await runCommand("fc-cache", ["-f"], env, "");
+  if (!(await fontsReady())) {
+    throw new Error("Noto Sans CJK is still missing. Install fonts-noto-core and fonts-noto-cjk, then run fc-cache -f.");
+  }
+}
+
+function fontsReady(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn("fc-list", [":", "family"], { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      out += chunk.toString();
+    });
+    child.on("error", () => resolve(false));
+    child.on("close", () => resolve(/Noto Sans CJK/i.test(out)));
+  });
 }
 
 function assertTool(command: string): Promise<void> {

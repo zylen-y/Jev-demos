@@ -64,6 +64,68 @@ function headerMs(response: Response, name: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+export type BatchCall =
+  | { ok: true; call: PostedCall }
+  | { ok: false; status: number; error: string };
+
+export async function postSystemOneBatch(options: {
+  apiKey: string;
+  requests: SystemOneRequest[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxRetries?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<BatchCall[]> {
+  const apiKey = options.apiKey.trim();
+  if (!apiKey) throw new JevCallError(401, "Add a Jev API key before running this demo.");
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+  if (options.timeoutMs != null) headers["x-atlas-timeout-ms"] = String(options.timeoutMs);
+  if (options.maxRetries != null) headers["x-atlas-max-retries"] = String(options.maxRetries);
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/jev/batch", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ requests: options.requests }),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new JevCallError(499, "The call was cancelled.");
+    }
+    throw new JevCallError(503, "Could not reach the demo proxy.");
+  }
+  const payload = await readJson(response);
+  if (!response.ok) {
+    throw new JevCallError(response.status, messageForStatus(response.status, payload));
+  }
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as { results?: unknown }).results)) {
+    throw new JevCallError(500, "The batch response was not in the expected shape.");
+  }
+  return (payload as { results: { status?: unknown; body?: unknown; upstreamMs?: unknown; modelMs?: unknown }[] }).results.map((item) => {
+    const status = typeof item.status === "number" ? item.status : 500;
+    if (status !== 200) {
+      const error = item.body && typeof item.body === "object" && typeof (item.body as { error?: unknown }).error === "string"
+        ? (item.body as { error: string }).error
+        : messageForStatus(status, item.body);
+      return { ok: false as const, status, error };
+    }
+    return {
+      ok: true as const,
+      call: {
+        response: parseSystemOneResponse(item.body),
+        latencyMs: typeof item.upstreamMs === "number" ? item.upstreamMs : 0,
+        upstreamMs: typeof item.upstreamMs === "number" ? item.upstreamMs : null,
+        modelMs: typeof item.modelMs === "number" ? item.modelMs : null,
+      },
+    };
+  });
+}
+
 export async function postModels(options: {
   apiKey: string;
   signal?: AbortSignal;

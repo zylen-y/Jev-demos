@@ -5,29 +5,30 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useKey } from "@/components/key-context";
 import { postSystemOne } from "@/lib/jev/browser";
-import { costUsd, estimateCostUsd, estimateTokens } from "@/lib/jev/cost";
+import { costUsd } from "@/lib/jev/cost";
 import { JevCallError } from "@/lib/jev/errors";
-import { mapPool } from "@/lib/pool";
+import { judgeEdits, type BurstItem } from "@/lib/relay/burst";
+import { placeStreamEdit, relayCensus, relayReadout } from "@/lib/relay/census";
 import {
   actionFromAnswers,
-  countFlips,
   DEFAULT_POLICY,
   mockAction,
+  MOCK_PLAYBACK_MS,
   readyPrefix,
-  REJUDGE_POLICY,
+  RECORD_POLICY,
   relayRequest,
-  WAVE_MS,
-  type JudgedRow,
   type RelayAction,
 } from "@/lib/relay/judge";
 import { metricDataAttributes, spendFromSummary, type MetricReading } from "@/lib/relay/metrics";
 import { columnsFor, paintRelayField } from "@/lib/relay/paint";
 import { formatRelayUsd, percentile, summarizeRelay, type RelaySample, type RelaySummary } from "@/lib/relay/stats";
 import { backfillWikipedia, editFromEvent, RELAY_BACKLOG, WIKI_STREAM_URL, type WikiEdit } from "@/lib/relay/wiki";
+import type { JudgedRow } from "@/lib/relay/judge";
 
 type Slot = JudgedRow & { edit: WikiEdit };
 type Sample = RelaySample & { modelMs: number | null };
 type Phase = "loading" | "ready" | "armed" | "judging" | "playing" | "done";
+type Incoming = { edit: WikiEdit; action: RelayAction | null };
 
 const EMPTY_SUMMARY: RelaySummary = {
   decisions: 0,
@@ -40,16 +41,21 @@ const EMPTY_SUMMARY: RelaySummary = {
   unpriced: 0,
 };
 
+const CARD_DELAY_MS = 4_000;
+
 export function RelayStage() {
   const params = useSearchParams();
   const mock = params.get("mock") === "1";
   const waveScene = params.get("scene") === "wave";
   const hold = params.get("hold") === "1";
   const autostart = params.get("autostart") === "1";
+  const present = params.get("present") === "1";
   const { apiKey, ready, open } = useKey();
 
-  const [policy, setPolicy] = useState(waveScene ? REJUDGE_POLICY : DEFAULT_POLICY);
+  const [policy, setPolicy] = useState(waveScene ? RECORD_POLICY : DEFAULT_POLICY);
   const [cells, setCells] = useState<Slot[]>([]);
+  const [incoming, setIncoming] = useState<Incoming[]>([]);
+  const [held, setHeld] = useState(0);
   const [phase, setPhase] = useState<Phase>("loading");
   const [revealed, setRevealed] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
@@ -59,6 +65,8 @@ export function RelayStage() {
   const [arrived, setArrived] = useState(0);
   const [localPassMs, setLocalPassMs] = useState<number | null>(null);
   const [wallMs, setWallMs] = useState<number | null>(null);
+  const [baselineSettled, setBaselineSettled] = useState(mock);
+  const [showCard, setShowCard] = useState(false);
   const [measured, setMeasured] = useState<MetricReading | null>(null);
   const [ledger, setLedger] = useState({ stream: EMPTY_SUMMARY, rejudge: EMPTY_SUMMARY, modelP50: null as number | null });
 
@@ -66,9 +74,10 @@ export function RelayStage() {
   const revealedRef = useRef(0);
   const paintedRef = useRef(0);
   const playRef = useRef(false);
-  const lockRef = useRef(false);
+  const frozenRef = useRef(false);
+  const liveWaveRef = useRef(false);
+  const judgingDoneRef = useRef(false);
   const seenRef = useRef(new Set<string>());
-  const queueRef = useRef<WikiEdit[]>([]);
   const committedRef = useRef(DEFAULT_POLICY);
   const policyRef = useRef(policy);
   const mockRef = useRef(mock);
@@ -76,35 +85,43 @@ export function RelayStage() {
   const waveSceneRef = useRef(waveScene);
   const phaseRef = useRef(phase);
   const beginWaveRef = useRef(() => {});
-  const flushQueueRef = useRef(() => {});
   const runRejudgeRef = useRef<(signal?: AbortSignal) => Promise<void>>(async () => {});
   const takeEditRef = useRef<(edit: WikiEdit) => void>(() => {});
+  const startBaselineRef = useRef(() => {});
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const patchesRef = useRef(new Map<string, Partial<Slot>>());
   const patchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamSamplesRef = useRef<Sample[]>([]);
   const rejudgeSamplesRef = useRef<Sample[]>([]);
+  const incomingRef = useRef<Incoming[]>([]);
+  const incomingPolicyRef = useRef(DEFAULT_POLICY);
   const abortRef = useRef<AbortController | null>(null);
+  const baselineAbortRef = useRef<AbortController | null>(null);
+  const baselineRunRef = useRef(false);
   const aliveRef = useRef(true);
   const openRef = useRef(open);
 
-  const sceneKey = `${String(mock)}:${String(waveScene)}:${String(hold)}`;
+  const sceneKey = `${String(mock)}:${String(waveScene)}:${String(hold)}:${String(present)}`;
   const [sceneKeySeen, setSceneKeySeen] = useState(sceneKey);
   if (sceneKeySeen !== sceneKey) {
     setSceneKeySeen(sceneKey);
     setPhase("loading");
     setCells([]);
+    setIncoming([]);
+    setHeld(0);
     setRevealed(0);
     setBanner(null);
     setStreamOn(false);
+    setShowCard(false);
+    setBaselineSettled(mock);
+    setWallMs(null);
+    setMeasured(null);
   }
 
   function publishLedger() {
     const stream = summarizeRelay(streamSamplesRef.current);
     const rejudge = summarizeRelay(rejudgeSamplesRef.current);
-    const source = rejudgeSamplesRef.current.some((sample) => sample.modelMs != null)
-      ? rejudgeSamplesRef.current
-      : streamSamplesRef.current;
+    const source = rejudgeSamplesRef.current.some((sample) => sample.modelMs != null) ? rejudgeSamplesRef.current : streamSamplesRef.current;
     const modelP50 = percentile(
       source.flatMap((sample) => (sample.modelMs == null ? [] : [sample.modelMs])),
       50,
@@ -132,7 +149,7 @@ export function RelayStage() {
     patchTimerRef.current = setTimeout(() => {
       patchTimerRef.current = null;
       if (aliveRef.current) applyPatches();
-    }, 50);
+    }, 40);
   }
 
   function flushPatches() {
@@ -146,14 +163,12 @@ export function RelayStage() {
   function beginWave() {
     if (cellsRef.current.length === 0) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    lockRef.current = true;
     if (reduce) {
       const total = cellsRef.current.length;
       revealedRef.current = total;
       paintedRef.current = total;
       setRevealed(total);
       playRef.current = false;
-      lockRef.current = false;
       setPhase("done");
       return;
     }
@@ -164,44 +179,45 @@ export function RelayStage() {
     setPhase("playing");
   }
 
-  function flushQueue() {
-    const queued = queueRef.current.splice(0);
-    if (queued.length === 0) return;
-    const slots: Slot[] = queued.map((edit) => ({
-      edit,
-      before: mockRef.current ? mockAction(edit, committedRef.current) : null,
-      after: null,
-    }));
-    setCells((prev) => {
-      const next = [...slots, ...prev].slice(0, RELAY_BACKLOG);
-      cellsRef.current = next;
-      return next;
-    });
-    setArrived((count) => count + queued.length);
-    if (!mockRef.current && apiKeyRef.current) {
-      for (const slot of slots) void judgeOne(slot, "before", committedRef.current, "stream");
-    }
-  }
-
   function takeEdit(edit: WikiEdit) {
     if (seenRef.current.has(edit.id)) return;
     seenRef.current.add(edit.id);
-    if (lockRef.current) {
-      queueRef.current.push(edit);
+    if (frozenRef.current) {
+      incomingRef.current = [{ edit, action: null }, ...incomingRef.current].slice(0, 8);
+      setIncoming(incomingRef.current);
+      setHeld((count) => count + 1);
+      void judgeIncoming(edit);
       return;
     }
     const slot: Slot = {
       edit,
-      before: mockRef.current ? mockAction(edit, DEFAULT_POLICY) : null,
+      before: mockRef.current ? mockAction(edit, committedRef.current) : null,
       after: null,
     };
-    setCells((prev) => {
-      const next = [slot, ...prev].slice(0, RELAY_BACKLOG);
-      cellsRef.current = next;
-      return next;
-    });
+    const placed = placeStreamEdit(cellsRef.current, [] as Slot[], slot, false, RELAY_BACKLOG);
+    cellsRef.current = placed.grid;
+    setCells(placed.grid);
     setArrived((count) => count + 1);
-    if (!mockRef.current && apiKeyRef.current) void judgeOne(slot, "before", committedRef.current, "stream");
+    if (!mockRef.current && apiKeyRef.current && slot.before == null) void judgeOne(slot, "before", committedRef.current, "stream");
+  }
+
+  async function judgeIncoming(edit: WikiEdit) {
+    const key = apiKeyRef.current;
+    if (!key) return;
+    try {
+      const call = await postSystemOne({
+        apiKey: key,
+        request: relayRequest(edit, incomingPolicyRef.current),
+        timeoutMs: 8000,
+        maxRetries: 2,
+        signal: abortRef.current?.signal,
+      });
+      const action = actionFromAnswers(call.response.answers);
+      incomingRef.current = incomingRef.current.map((item) => (item.edit.id === edit.id ? { ...item, action } : item));
+      setIncoming(incomingRef.current);
+    } catch {
+      /* a held edit can stay unlabeled; it is not part of the grid */
+    }
   }
 
   async function judgeOne(slot: Slot, field: "before" | "after", policyText: string, bucket: "stream" | "rejudge") {
@@ -212,7 +228,7 @@ export function RelayStage() {
         apiKey: key,
         request: relayRequest(slot.edit, policyText),
         timeoutMs: 8000,
-        maxRetries: 0,
+        maxRetries: 2,
         signal: abortRef.current?.signal,
       });
       const action = actionFromAnswers(call.response.answers);
@@ -232,56 +248,56 @@ export function RelayStage() {
     }
   }
 
-  async function judgeMissing(
-    list: Slot[],
-    field: "before" | "after",
-    policyText: string,
-    signal: AbortSignal,
-    skipFilled: boolean,
-  ) {
-    const pending = list.filter((slot) => (skipFilled ? slot[field] == null && !slot.failed : true));
-    await mapPool(
-      pending,
-      6,
-      async (slot) => {
-        try {
-          const call = await postSystemOne({
-            apiKey: apiKeyRef.current,
-            request: relayRequest(slot.edit, policyText),
-            timeoutMs: 8000,
-            maxRetries: 0,
-            signal,
-          });
-          const action = actionFromAnswers(call.response.answers);
-          rejudgeSamplesRef.current.push({
-            roundTripMs: call.latencyMs,
-            upstreamMs: call.upstreamMs,
-            modelMs: call.modelMs,
-            costUsd: costUsd(call.response.usage),
-            inputTokens: call.response.usage.input_tokens,
-          });
-          queuePatch(slot.edit.id, { [field]: action, failed: false });
-        } catch (error) {
-          if (signal.aborted) throw error;
-          queuePatch(slot.edit.id, { failed: true });
-          if (aliveRef.current) setNote(errorText(error));
-        }
-      },
-      { signal },
-    );
+  function applyBurst(field: "before" | "after", bucket: "stream" | "rejudge", item: BurstItem) {
+    if (item.failed) {
+      queuePatch(item.id, { failed: true });
+      if (aliveRef.current) setNote(item.error);
+      return;
+    }
+    (bucket === "rejudge" ? rejudgeSamplesRef : streamSamplesRef).current.push(item.hit.sample);
+    queuePatch(item.id, { [field]: item.hit.action, failed: false });
+  }
+
+  function startBaseline() {
+    if (mockRef.current || frozenRef.current || baselineRunRef.current || !apiKeyRef.current) return;
+    const jobs = cellsRef.current.filter((slot) => slot.before == null && !slot.failed).map((slot) => ({ id: slot.edit.id, edit: slot.edit }));
+    if (jobs.length === 0) {
+      if (cellsRef.current.length > 0) setBaselineSettled(true);
+      return;
+    }
+    baselineRunRef.current = true;
+    const controller = new AbortController();
+    baselineAbortRef.current = controller;
+    void judgeEdits({
+      apiKey: apiKeyRef.current,
+      jobs,
+      policy: DEFAULT_POLICY,
+      signal: controller.signal,
+      onItem: (item) => applyBurst("before", "stream", item),
+    })
+      .then(() => {
+        if (aliveRef.current) setBaselineSettled(true);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || !aliveRef.current) return;
+        setBaselineSettled(true);
+        setNote(errorText(error));
+      });
   }
 
   async function runRejudge(signal?: AbortSignal) {
-    if (playRef.current || phaseRef.current === "judging" || cellsRef.current.length === 0) return;
+    if (playRef.current || liveWaveRef.current || phaseRef.current === "judging" || cellsRef.current.length === 0) return;
     if (!mockRef.current && !apiKeyRef.current) {
       openRef.current();
       return;
     }
     const policyText = policyRef.current.trim();
     if (!policyText) return;
-    lockRef.current = true;
+    frozenRef.current = true;
+    incomingPolicyRef.current = policyText;
+    baselineAbortRef.current?.abort();
     setNote(null);
-    setPhase("judging");
+    setShowCard(false);
     const snapshot = cellsRef.current.map((slot) => ({
       ...slot,
       before: slot.after ?? slot.before,
@@ -320,9 +336,34 @@ export function RelayStage() {
       const linked = signal ?? controller.signal;
       rejudgeSamplesRef.current = [];
       const started = performance.now();
-      await judgeMissing(snapshot, "before", committedRef.current, linked, true);
+      liveWaveRef.current = true;
+      judgingDoneRef.current = false;
+      revealedRef.current = 0;
+      paintedRef.current = 0;
+      setRevealed(0);
+      setPhase("playing");
+      const missingBefore = snapshot.filter((slot) => slot.before == null).map((slot) => ({ id: slot.edit.id, edit: slot.edit }));
+      if (missingBefore.length > 0) {
+        await judgeEdits({
+          apiKey: apiKeyRef.current,
+          jobs: missingBefore,
+          policy: committedRef.current,
+          signal: linked,
+          onItem: (item) => applyBurst("before", "stream", item),
+        });
+        flushPatches();
+      }
+      await judgeEdits({
+        apiKey: apiKeyRef.current,
+        jobs: cellsRef.current.map((slot) => ({ id: slot.edit.id, edit: slot.edit })),
+        policy: policyText,
+        signal: linked,
+        onItem: (item) => applyBurst("after", "rejudge", item),
+      });
       flushPatches();
-      await judgeMissing(cellsRef.current, "after", policyText, linked, false);
+      for (const slot of cellsRef.current) {
+        if (slot.after == null && !slot.failed) queuePatch(slot.edit.id, { failed: true });
+      }
       flushPatches();
       if (linked.aborted || !aliveRef.current) return;
       const durationMs = performance.now() - started;
@@ -337,9 +378,15 @@ export function RelayStage() {
         spendUsd: spendFromSummary(summary),
       });
       committedRef.current = policyText;
-      beginWaveRef.current();
+      judgingDoneRef.current = true;
+      if (readyPrefix(cellsRef.current) >= cellsRef.current.length) {
+        liveWaveRef.current = false;
+        revealedRef.current = cellsRef.current.length;
+        setRevealed(cellsRef.current.length);
+        setPhase("done");
+      }
     } catch (error) {
-      lockRef.current = false;
+      liveWaveRef.current = false;
       if (!aliveRef.current) return;
       if (error instanceof DOMException && error.name === "AbortError") return;
       setPhase("ready");
@@ -355,9 +402,9 @@ export function RelayStage() {
     phaseRef.current = phase;
     openRef.current = open;
     beginWaveRef.current = beginWave;
-    flushQueueRef.current = flushQueue;
     takeEditRef.current = takeEdit;
     runRejudgeRef.current = runRejudge;
+    startBaselineRef.current = startBaseline;
   });
 
   useEffect(() => {
@@ -390,11 +437,23 @@ export function RelayStage() {
           });
         }
       }
-      if (playRef.current) {
+      if (liveWaveRef.current) {
+        const ready = readyPrefix(cellsRef.current);
+        if (ready !== revealedRef.current) {
+          revealedRef.current = ready;
+          paintedRef.current = ready;
+          lastPublish = now;
+          setRevealed(ready);
+        }
+        if (judgingDoneRef.current && cellsRef.current.length > 0 && ready >= cellsRef.current.length) {
+          liveWaveRef.current = false;
+          setPhase("done");
+        }
+      } else if (playRef.current) {
         const total = cellsRef.current.length;
         const ready = readyPrefix(cellsRef.current);
         const dt = Math.min(48, Math.max(0, now - last));
-        const rate = total > 0 ? total / WAVE_MS : 0;
+        const rate = total > 0 ? total / MOCK_PLAYBACK_MS : 0;
         paintedRef.current = Math.min(ready, paintedRef.current + dt * rate);
         const next = Math.floor(paintedRef.current);
         revealedRef.current = next;
@@ -404,9 +463,7 @@ export function RelayStage() {
           setRevealed(next);
           if (finished) {
             playRef.current = false;
-            lockRef.current = false;
             setPhase("done");
-            flushQueueRef.current();
           }
         }
       }
@@ -422,11 +479,24 @@ export function RelayStage() {
       cancelAnimationFrame(frame);
       window.removeEventListener("relay-play", onPlay);
       abortRef.current?.abort();
+      baselineAbortRef.current?.abort();
     };
   }, []);
 
   useEffect(() => {
+    if (phase !== "done" || !present) return;
+    const timer = setTimeout(() => setShowCard(true), CARD_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [phase, present]);
+
+  useEffect(() => {
     let cancel = false;
+    baselineAbortRef.current?.abort();
+    baselineRunRef.current = false;
+    frozenRef.current = false;
+    liveWaveRef.current = false;
+    cellsRef.current = [];
+    incomingRef.current = [];
     seenRef.current = new Set();
     backfillWikipedia(RELAY_BACKLOG)
       .then((edits) => {
@@ -434,7 +504,7 @@ export function RelayStage() {
         const slots: Slot[] = edits.map((edit) => ({
           edit,
           before: mock ? mockAction(edit, DEFAULT_POLICY) : null,
-          after: mock && waveScene ? mockAction(edit, REJUDGE_POLICY) : null,
+          after: mock && waveScene ? mockAction(edit, RECORD_POLICY) : null,
         }));
         for (const slot of slots) seenRef.current.add(slot.edit.id);
         cellsRef.current = slots;
@@ -442,25 +512,32 @@ export function RelayStage() {
         if (slots.length === 0) {
           setBanner("Wikipedia did not return recent changes.");
           setPhase("ready");
+          setBaselineSettled(true);
           return;
         }
-        if (mock && waveScene) committedRef.current = REJUDGE_POLICY;
+        if (mock && waveScene) committedRef.current = RECORD_POLICY;
         if (mock && waveScene && hold) setPhase("armed");
         else if (mock && waveScene) beginWaveRef.current();
         else {
           setPhase("ready");
           if (!waveScene) setStreamOn(true);
+          startBaselineRef.current();
         }
       })
       .catch(() => {
         if (cancel) return;
         setBanner("Could not reach English Wikipedia for the backlog.");
         setPhase("ready");
+        setBaselineSettled(true);
       });
     return () => {
       cancel = true;
     };
   }, [hold, mock, waveScene]);
+
+  useEffect(() => {
+    startBaselineRef.current();
+  }, [apiKey, mock, cells.length]);
 
   useEffect(() => {
     if (!streamOn) return;
@@ -485,16 +562,12 @@ export function RelayStage() {
     return () => controller.abort();
   }, [apiKey, autostart, cells.length, mock, ready, waveScene]);
 
-  const flips = countFlips(cells, revealed);
-  const decisions = cells.reduce((sum, slot) => sum + (slot.before ? 1 : 0), 0);
+  const census = relayCensus(cells, revealed);
   const activeSummary = ledger.rejudge.decisions > 0 ? ledger.rejudge : ledger.stream;
-  const examples = useMemo(() => pickExamples(cells, revealed), [cells, revealed]);
-  const estimate = useMemo(() => {
-    const first = cells[0];
-    if (mock || !first) return null;
-    const passes = first.before == null ? 2 : 1;
-    return estimateCostUsd(estimateTokens(relayRequest(first.edit, policy || DEFAULT_POLICY)) * cells.length * passes);
-  }, [cells, mock, policy]);
+  const examples = useMemo(() => frontierFlips(cells, revealed), [cells, revealed]);
+  const sweeping = phase === "playing" || phase === "done";
+  const readout = relayReadout(census, sweeping);
+  const headlineLabel = sweeping ? "Flipped" : "Judged";
 
   const streamLabel = !streamOn
     ? "Backlog"
@@ -513,13 +586,23 @@ export function RelayStage() {
   }
 
   const busy = phase === "loading" || phase === "judging" || phase === "playing";
+  const spend = mock || activeSummary.decisions === 0 || activeSummary.unpriced === activeSummary.decisions ? null : formatRelayUsd(activeSummary.spendUsd);
+  const cardTime = mock ? `${(MOCK_PLAYBACK_MS / 1000).toFixed(1)} s playback` : wallMs != null ? formatMs(wallMs) : null;
+  const cardSpend = !mock && measured?.spendUsd != null ? formatRelayUsd(measured.spendUsd) : null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-[#100e0c] text-[#efeae0]"
-      data-backlog={cells.length}
+      data-backlog={census.total}
+      data-baseline={baselineSettled ? "1" : "0"}
+      data-decided={census.decided}
+      data-flipped={census.flipped}
       data-mock={mock ? "1" : "0"}
+      data-phase={phase}
+      data-present={present ? "1" : "0"}
+      data-shown={census.shown}
       data-testid="relay-stage"
+      data-unchanged={census.unchanged}
     >
       <div
         className="sr-only"
@@ -543,9 +626,14 @@ export function RelayStage() {
           <p className="mono hidden text-[11px] uppercase tracking-[0.18em] text-[#efeae0]/60 sm:block">Relay · Wikipedia</p>
         </div>
         <div className="flex items-center gap-3">
-          <p className="mono hidden text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/55 md:block" data-testid="relay-stream">
+          <p className={`mono hidden uppercase text-[#efeae0]/55 md:block ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`} data-testid="relay-stream">
             {streamLabel}
           </p>
+          {held > 0 ? (
+            <p className="mono text-[11px] uppercase tracking-[0.14em] text-[#efeae0]/70" data-count={held} data-testid="relay-incoming">
+              {held.toLocaleString()} new, held off the grid
+            </p>
+          ) : null}
           {mock ? (
             <p className="bg-[#e23b16] px-3 py-1.5 text-sm font-semibold tracking-[0.22em] text-white">MOCKED</p>
           ) : (
@@ -559,42 +647,62 @@ export function RelayStage() {
           <canvas aria-hidden="true" className="h-full w-full" ref={canvasRef} />
         </div>
         <div className="pointer-events-none absolute left-0 top-0 h-64 w-[min(100%,28rem)] bg-gradient-to-br from-[#100e0c] via-[#100e0c]/82 to-transparent" />
-        <div className="pointer-events-none absolute left-4 top-4 sm:left-6 sm:top-6">
-          <p className="mono text-[11px] uppercase tracking-[0.2em] text-[#efeae0]/60">Flipped</p>
+        <div className={`pointer-events-none absolute left-4 top-4 sm:left-6 sm:top-6 ${present ? "sm:left-8 sm:top-6" : ""}`}>
+          <p className={`mono uppercase text-[#efeae0]/60 ${present ? "text-sm tracking-[0.18em]" : "text-[11px] tracking-[0.2em]"}`}>{headlineLabel}</p>
           <p
-            className={`serif text-6xl leading-none sm:text-7xl lg:text-8xl ${flips.flipped > 0 ? "text-[#ff3b1f]" : "text-[#efeae0]"}`}
-            data-count={flips.flipped}
+            className={`serif leading-none ${readout.headline > 0 ? "text-[#ff3b1f]" : "text-[#efeae0]"} ${present ? "text-8xl sm:text-9xl" : "text-6xl sm:text-7xl lg:text-8xl"}`}
+            data-count={readout.headline}
             data-testid="relay-flips"
           >
-            {flips.flipped.toLocaleString()}
+            {readout.headline.toLocaleString()}
           </p>
-          <p className="mt-2 text-sm text-[#efeae0]/75">
-            {flips.unchanged.toLocaleString()} unchanged
-            <span className="mono ml-3 text-[11px] uppercase tracking-[0.14em]" data-count={revealed} data-testid="relay-revealed">
-              {revealed.toLocaleString()} of {cells.length.toLocaleString()}
+          <p className={`mt-2 text-[#efeae0]/75 ${present ? "text-xl" : "text-sm"}`}>
+            {sweeping ? `${readout.unchanged.toLocaleString()} unchanged` : "baseline"}
+            {census.failed > 0 ? ` · ${census.failed.toLocaleString()} failed` : ""}
+            <span className={`mono ml-3 uppercase ${present ? "text-sm tracking-[0.12em]" : "text-[11px] tracking-[0.14em]"}`} data-count={readout.progress} data-testid="relay-revealed">
+              {readout.progress.toLocaleString()} of {readout.total.toLocaleString()}
             </span>
           </p>
           <Legend />
         </div>
-        <aside className="absolute bottom-4 right-4 hidden w-[340px] lg:block">
-          <ExampleCard examples={examples} live={cells.slice(0, 5)} mock={mock} showFlips={flips.flipped > 0} />
+        {present && (phase === "playing" || (phase === "done" && !showCard)) ? (
+          <div className="pointer-events-none absolute left-[24rem] right-[28rem] top-8" data-testid="relay-caption">
+            <p className="serif text-6xl leading-none">New rule.</p>
+            <p className="serif mt-3 text-4xl leading-tight">{census.total.toLocaleString()} live Wikipedia edits re-judged.</p>
+          </div>
+        ) : null}
+        <aside className={`absolute bottom-4 right-4 hidden lg:block ${present ? "w-[32rem]" : "w-[340px]"}`}>
+          <ExampleCard examples={examples} incoming={incoming} live={cells.slice(0, 5)} mock={mock} present={present} showFlips={census.flipped > 0} />
         </aside>
         {phase === "loading" ? (
-          <p className="absolute inset-x-0 top-1/2 text-center text-sm text-[#efeae0]/70">
-            Pulling the last {RELAY_BACKLOG.toLocaleString()} English Wikipedia edits…
-          </p>
+          <p className="absolute inset-x-0 top-1/2 text-center text-sm text-[#efeae0]/70">Pulling the last {RELAY_BACKLOG.toLocaleString()} English Wikipedia edits…</p>
         ) : null}
         {banner ? <p className="absolute inset-x-6 top-1/2 text-center text-sm text-[#efeae0]">{banner}</p> : null}
+        {showCard && cardTime ? (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#100e0c]/94 px-8" data-testid="relay-stat-card">
+            <p className="serif text-center text-5xl leading-tight sm:text-7xl">
+              {census.total.toLocaleString()} edits
+              <span className="text-[#efeae0]/35"> · </span>
+              {cardTime}
+              {cardSpend ? (
+                <>
+                  <span className="text-[#efeae0]/35"> · </span>
+                  {cardSpend}
+                </>
+              ) : null}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <footer className="border-t border-white/10 bg-[#14120f] px-4 py-3 sm:px-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <label className="block min-w-0 flex-1 text-sm" htmlFor="relay-policy">
-            <span className="mono mb-1.5 block text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/50">Policy</span>
+            <span className={`mono mb-1.5 block uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>Policy</span>
             <textarea
-              className="h-16 w-full resize-none rounded-md border border-white/15 bg-[#0c0b09] px-3 py-2 text-sm leading-5 text-[#efeae0]"
-              id="relay-policy"
+              className={`w-full resize-none rounded-md border border-white/15 bg-[#0c0b09] px-3 py-2 leading-snug text-[#efeae0] ${present ? "h-28 text-[1.7rem]" : "h-16 text-sm leading-5"}`}
               data-testid="relay-policy"
+              id="relay-policy"
               onChange={(event) => setPolicy(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -608,7 +716,7 @@ export function RelayStage() {
             />
           </label>
           <button
-            className="h-12 shrink-0 rounded-md bg-[#e23b16] px-5 text-sm font-medium text-white disabled:opacity-50 lg:h-16"
+            className={`shrink-0 rounded-md bg-[#e23b16] font-medium text-white disabled:opacity-50 ${present ? "h-28 px-8 text-2xl" : "h-12 px-5 text-sm lg:h-16"}`}
             data-testid="relay-rejudge"
             disabled={busy || cells.length === 0 || policy.trim() === ""}
             onClick={onRejudge}
@@ -617,29 +725,25 @@ export function RelayStage() {
             {phase === "playing" ? "Sweeping" : phase === "judging" ? "Judging" : "Re-judge the backlog"}
           </button>
         </div>
-        <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#efeae0]/80">
-          <Stat label="Decisions" testId="relay-decisions" value={decisions.toLocaleString()} count={decisions} />
-          <Stat label="Round trip p50" value={formatMs(activeSummary.p50RoundTripMs)} />
-          <Stat label="Upstream p50" value={formatMs(activeSummary.p50UpstreamMs)} />
-          <Stat label="Model p50" value={formatMs(ledger.modelP50)} />
-          <Stat
-            label="Re-judge"
-            value={wallMs != null ? formatMs(wallMs) : localPassMs != null ? `${formatMs(localPassMs)} local` : "—"}
-          />
-          <Stat label="Wave" value={revealed > 0 || phase === "playing" ? `${(WAVE_MS / 1000).toFixed(1)} s playback` : "—"} />
-          <Stat label="Spend" testId="relay-spend" value={mock ? "—" : spendText(activeSummary)} />
+        <dl className={`mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[#efeae0]/80 ${present ? "text-lg" : "text-xs"}`}>
+          <Stat count={readout.decisions} label="Decisions" testId="relay-decisions" value={readout.decisions.toLocaleString()} />
+          <MaybeStat label="Round trip p50" value={activeSummary.p50RoundTripMs == null ? null : formatMs(activeSummary.p50RoundTripMs)} />
+          <MaybeStat label="Upstream p50" value={activeSummary.p50UpstreamMs == null ? null : formatMs(activeSummary.p50UpstreamMs)} />
+          <MaybeStat label="Model p50" value={ledger.modelP50 == null ? null : formatMs(ledger.modelP50)} />
+          <MaybeStat label="Re-judge" value={wallMs != null ? formatMs(wallMs) : localPassMs != null ? `${formatMs(localPassMs)} local` : null} />
+          <MaybeStat label="Wave" value={mock && (phase === "playing" || phase === "done") ? `${(MOCK_PLAYBACK_MS / 1000).toFixed(1)} s playback` : null} />
+          <MaybeStat label="Spend" testId="relay-spend" value={spend} />
         </dl>
-        <p className="mt-2 text-[11px] leading-4 text-[#efeae0]/45">
+        <p className={`mt-2 leading-4 text-[#efeae0]/45 ${present ? "text-sm" : "text-[11px]"}`}>
           {mock
-            ? "Mocked decisions, measured on this page. Wikipedia edits are live. This is not a Jev call."
+            ? "Mocked decisions, measured on this page. Wikipedia edits are live. This is not a Jev call. The sweep is playback."
             : ready && !apiKey
               ? "The stream is live. Paste a key to judge it. No decision is filled in until then."
-              : "Round trip is the measured wait. Model time stays blank unless a timing header names model, inference, or jev. The wave is playback."}
-          {estimate != null ? ` Estimate from input characters: ${formatRelayUsd(estimate)}.` : ""}
+              : "Cells flip as each decision lands. Re-judge time is the wall clock. Spend is the summed reported input tokens."}
           {note ? ` ${note}` : ""}
         </p>
         <div className="mt-3 lg:hidden">
-          <ExampleCard examples={examples} live={cells.slice(0, 3)} mock={mock} showFlips={flips.flipped > 0} />
+          <ExampleCard examples={examples} incoming={incoming} live={cells.slice(0, 3)} mock={mock} present={present} showFlips={census.flipped > 0} />
         </div>
       </footer>
     </div>
@@ -652,6 +756,10 @@ function Legend() {
       <li className="flex items-center gap-2">
         <span className="inline-block h-3 w-3 border border-[#fff8f2] bg-[#ff3b1f]" />
         Flipped
+      </li>
+      <li className="flex items-center gap-2">
+        <span className="inline-block h-2 w-2 bg-[#1f8f52]" />
+        Baseline
       </li>
       <li className="flex items-center gap-2">
         <span className="inline-block h-2 w-2 bg-[#173628]" />
@@ -667,27 +775,31 @@ function Legend() {
 
 function ExampleCard({
   examples,
+  incoming,
   live,
   showFlips,
   mock,
+  present,
 }: {
   examples: Slot[];
+  incoming: Incoming[];
   live: Slot[];
   showFlips: boolean;
   mock: boolean;
+  present: boolean;
 }) {
   if (showFlips) {
     return (
-      <div className="rounded-md border border-white/10 bg-[#14120f]/92 p-3 backdrop-blur-sm" data-testid="relay-examples">
-        <p className="mono text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/50">Rows that changed</p>
-        <ul className="mt-2 space-y-2.5">
+      <div className="max-h-full overflow-hidden rounded-md border border-white/10 bg-[#14120f]/92 p-4 backdrop-blur-sm" data-testid="relay-examples">
+        <p className={`mono uppercase text-[#efeae0]/50 ${present ? "text-sm tracking-[0.14em]" : "text-[11px] tracking-[0.16em]"}`}>Rows that changed</p>
+        <ul className={`mt-3 flex flex-col ${present ? "gap-4" : "gap-3"}`}>
           {examples.map((slot) => (
-            <li key={slot.edit.id}>
-              <p className="truncate text-sm">{slot.edit.title}</p>
-              <p className="truncate text-xs text-[#efeae0]/50">
+            <li className="min-w-0 overflow-hidden" key={slot.edit.id}>
+              <p className={`truncate leading-6 ${present ? "text-2xl" : "text-sm"}`}>{slot.edit.title}</p>
+              <p className={`truncate text-[#efeae0]/50 ${present ? "text-base" : "text-xs"}`}>
                 {slot.edit.wiki} · {slot.edit.summary || "No summary"}
               </p>
-              <p className="mono mt-0.5 text-[11px] uppercase tracking-[0.12em]">
+              <p className={`mono mt-1 whitespace-nowrap uppercase ${present ? "text-lg tracking-[0.12em]" : "text-[11px] tracking-[0.12em]"}`}>
                 <ActionName action={slot.before} />
                 <span className="px-1.5 text-[#efeae0]/40">→</span>
                 <ActionName action={slot.after} />
@@ -698,17 +810,16 @@ function ExampleCard({
       </div>
     );
   }
+  const rows = incoming.length > 0 ? incoming.slice(0, 4).map((item) => item.edit) : live.map((slot) => slot.edit);
   return (
-    <div className="rounded-md border border-white/10 bg-[#14120f]/92 p-3 backdrop-blur-sm" data-testid="relay-live">
-      <p className="mono text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/50">
-        Latest edits{mock ? " · local read" : ""}
-      </p>
-      <ul className="mt-2 space-y-2.5">
-        {live.map((slot) => (
-          <li data-testid="relay-live-row" key={slot.edit.id}>
-            <p className="truncate text-sm">{slot.edit.title}</p>
+    <div className="max-h-full overflow-hidden rounded-md border border-white/10 bg-[#14120f]/92 p-4 backdrop-blur-sm" data-testid="relay-live">
+      <p className="mono text-[11px] uppercase tracking-[0.16em] text-[#efeae0]/50">{incoming.length > 0 ? "New, held off the grid" : `Latest edits${mock ? " · local read" : ""}`}</p>
+      <ul className="mt-3 flex flex-col gap-3">
+        {rows.map((edit) => (
+          <li className="min-w-0 overflow-hidden" data-testid="relay-live-row" key={edit.id}>
+            <p className="truncate text-sm leading-6">{edit.title}</p>
             <p className="truncate text-xs text-[#efeae0]/50">
-              {slot.edit.wiki} · {slot.edit.summary || "No summary"}
+              {edit.wiki} · {edit.summary || "No summary"}
             </p>
           </li>
         ))}
@@ -725,30 +836,26 @@ function ActionName({ action }: { action: RelayAction | null }) {
 function Stat({ label, value, testId, count }: { label: string; value: string; testId?: string; count?: number }) {
   return (
     <div data-count={count} data-testid={testId}>
-      <dt className="mono inline text-[10px] uppercase tracking-[0.14em] text-[#efeae0]/40">{label} </dt>
+      <dt className="mono inline uppercase tracking-[0.14em] text-[#efeae0]/40">{label} </dt>
       <dd className="inline">{value}</dd>
     </div>
   );
 }
 
-function pickExamples(cells: readonly Slot[], revealed: number): Slot[] {
+function MaybeStat({ label, value, testId }: { label: string; value: string | null; testId?: string }) {
+  if (value == null) return null;
+  return <Stat label={label} testId={testId} value={value} />;
+}
+
+function frontierFlips(cells: readonly Slot[], revealed: number): Slot[] {
   const found: Slot[] = [];
-  const end = Math.min(cells.length, revealed);
-  for (let index = 0; index < end; index += 1) {
+  const end = Math.min(cells.length, Math.max(0, revealed));
+  for (let index = end - 1; index >= 0 && found.length < 4; index -= 1) {
     const slot = cells[index];
     if (!slot?.before || !slot.after || slot.before === slot.after) continue;
     found.push(slot);
   }
-  if (found.length <= 4) return found;
-  const picks = [0, 0.33, 0.66, 0.9].map((t) => found[Math.min(found.length - 1, Math.floor(t * found.length))]!);
-  const unique: Slot[] = [];
-  const seen = new Set<string>();
-  for (const slot of picks) {
-    if (seen.has(slot.edit.id)) continue;
-    seen.add(slot.edit.id);
-    unique.push(slot);
-  }
-  return unique;
+  return found.reverse();
 }
 
 function formatMs(value: number | null): string {
@@ -756,11 +863,6 @@ function formatMs(value: number | null): string {
   if (value < 10) return `${value.toFixed(1)} ms`;
   if (value < 1000) return `${Math.round(value)} ms`;
   return `${(value / 1000).toFixed(1)} s`;
-}
-
-function spendText(summary: RelaySummary): string {
-  if (summary.decisions === 0 || summary.unpriced === summary.decisions) return "—";
-  return formatRelayUsd(summary.spendUsd);
 }
 
 function errorText(error: unknown): string {

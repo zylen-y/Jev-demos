@@ -29,3 +29,24 @@ export async function mapPool<T, R>(
   await Promise.all(workers);
   return results;
 }
+
+/** Caps how many jobs run at once across overlapping callers. */
+export function createLimiter(concurrency: number) {
+  const limit = Math.max(1, Math.floor(concurrency));
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async function limitRun<T>(job: () => Promise<T>): Promise<T> {
+    if (active >= limit) {
+      await new Promise<void>((resolve) => {
+        waiting.push(resolve);
+      });
+    }
+    active += 1;
+    try {
+      return await job();
+    } finally {
+      active -= 1;
+      waiting.shift()?.();
+    }
+  };
+}

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/jev/client", () => ({
   evaluateSystemOne: vi.fn(),
+  evaluateSystemOneMany: vi.fn(),
   listModels: vi.fn(),
   modelMsFor: () => null,
 }));

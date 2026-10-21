@@ -12,10 +12,20 @@ import {
   TypeSafeError,
   type SystemOneRequest as SdkRequest,
 } from "@typesafe-ai/sdk";
+import { createLimiter } from "../pool";
 import { JevCallError, messageForStatus, redactSecret } from "./errors";
 import { parseSystemOneResponse } from "./parse";
 import type { ModelCard, SystemOneRequest, SystemOneResponse } from "./types";
 import { DEFAULT_BASE_URL, JEV_MODEL } from "./types";
+
+/**
+ * In-flight cap for a relay burst. TypeSafe publishes per-organization token and
+ * request limits, not a fixed rate. The SDK default client allows about 100
+ * connections. 48 stays under that. 429 and 529 use the SDK backoff below.
+ */
+export const JEV_BURST_IN_FLIGHT = 48;
+
+const burstGate = createLimiter(JEV_BURST_IN_FLIGHT);
 
 export type EvaluateOptions = {
   apiKey: string;
@@ -50,13 +60,64 @@ export function modelTimeFromHeaders(headers: Headers): number | null {
   return null;
 }
 
+export type BatchItem = {
+  status: number;
+  body: unknown;
+  upstreamMs: number | null;
+  modelMs: number | null;
+};
+
 export async function evaluateSystemOne(options: EvaluateOptions): Promise<SystemOneResponse> {
   const apiKey = options.apiKey.trim();
   if (!apiKey) {
     throw new JevCallError(401, "Add a Jev API key before running this demo.");
   }
-  const client = new TypeSafeClient({
-    apiKey,
+  const client = openClient(options);
+  try {
+    return await runOne(client, options.request, options.signal, options.timeoutMs, options.maxRetries);
+  } catch (error) {
+    throw toJevCallError(error, apiKey);
+  }
+}
+
+/** One shared client, many System One calls, capped by `JEV_BURST_IN_FLIGHT`. */
+export async function evaluateSystemOneMany(options: Omit<EvaluateOptions, "request"> & { requests: SystemOneRequest[] }): Promise<BatchItem[]> {
+  const apiKey = options.apiKey.trim();
+  if (!apiKey) {
+    throw new JevCallError(401, "Add a Jev API key before running this demo.");
+  }
+  if (options.requests.length === 0) return [];
+  const client = openClient(options);
+  const retry = options.maxRetries == null ? undefined : { maxRetries: options.maxRetries };
+  return Promise.all(
+    options.requests.map(async (request) =>
+      burstGate(async () => {
+        if (options.signal?.aborted) throw new DOMException("The batch was cancelled.", "AbortError");
+        const started = performance.now();
+        try {
+          const pending = client.systemOne(request as unknown as SdkRequest, {
+            signal: options.signal,
+            timeout: options.timeoutMs,
+            retry,
+          });
+          const wrapped = await pending.withResponse();
+          const response = parseSystemOneResponse(wrapped.data);
+          const modelMs = modelTimeFromHeaders(wrapped.response.headers);
+          modelTimes.set(response, modelMs);
+          return { status: 200, body: response, upstreamMs: performance.now() - started, modelMs };
+        } catch (error) {
+          if (options.signal?.aborted) throw toJevCallError(error, apiKey);
+          const mapped = toJevCallError(error, apiKey);
+          return { status: mapped.status, body: { error: mapped.message }, upstreamMs: performance.now() - started, modelMs: null };
+        }
+      }),
+    ),
+  );
+}
+
+function openClient(options: Omit<EvaluateOptions, "request">): TypeSafeClient {
+  return new TypeSafeClient({
+    apiKey: options.apiKey.trim(),
     baseURL: options.baseURL ?? DEFAULT_BASE_URL,
     defaultModel: JEV_MODEL,
     logLevel: "off",
@@ -64,19 +125,24 @@ export async function evaluateSystemOne(options: EvaluateOptions): Promise<Syste
     timeout: options.timeoutMs ?? 20_000,
     retry: options.maxRetries == null ? undefined : { maxRetries: options.maxRetries },
   });
-  try {
-    const pending = client.systemOne(options.request as unknown as SdkRequest, {
-      signal: options.signal,
-      timeout: options.timeoutMs,
-      retry: options.maxRetries == null ? undefined : { maxRetries: options.maxRetries },
-    });
-    const wrapped = await pending.withResponse();
-    const response = parseSystemOneResponse(wrapped.data);
-    modelTimes.set(response, modelTimeFromHeaders(wrapped.response.headers));
-    return response;
-  } catch (error) {
-    throw toJevCallError(error, apiKey);
-  }
+}
+
+async function runOne(
+  client: TypeSafeClient,
+  request: SystemOneRequest,
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+  maxRetries: number | undefined,
+): Promise<SystemOneResponse> {
+  const pending = client.systemOne(request as unknown as SdkRequest, {
+    signal,
+    timeout: timeoutMs,
+    retry: maxRetries == null ? undefined : { maxRetries },
+  });
+  const wrapped = await pending.withResponse();
+  const response = parseSystemOneResponse(wrapped.data);
+  modelTimes.set(response, modelTimeFromHeaders(wrapped.response.headers));
+  return response;
 }
 
 export async function listModels(options: {
