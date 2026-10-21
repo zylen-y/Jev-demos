@@ -11,10 +11,10 @@ export function Landing() {
         <div className="rise">
           <p className="mono text-[11px] uppercase tracking-[0.2em] text-muted">TypeSafe · System One · Jev</p>
           <h1 className="serif mt-4 text-[clamp(3.2rem,7vw,6.4rem)] leading-[0.9] tracking-tight">
-            Every decision on the map, <span className="italic text-vermilion">live.</span>
+            Every decision on the map, <span className="italic text-vermilion">in {MODEL_TARGET_MS}&nbsp;ms.</span>
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-8 text-muted">
-            Twenty-four demos of the TypeSafe use-case map. Paste your Jev key, then run classification, detection, scoring, routing, search, verification, and the rest on sample data or your own.
+            <span className="text-ink">${INPUT_USD_PER_MILLION} per million input tokens.</span> Output tokens are free, and the use-case map calls that 100x cheaper. Paste your Jev key and run classification, detection, scoring, routing, search, verification, and the rest on sample data or your own.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link className="rounded-full bg-ink px-5 py-3 text-sm text-paper" href="/gallery">
@@ -28,7 +28,7 @@ export function Landing() {
 
       <section className="mx-auto grid max-w-6xl gap-px overflow-hidden rounded-3xl border border-line bg-line px-0 sm:grid-cols-4">
         {[
-          ["~" + MODEL_TARGET_MS + " ms", "Model time, used as a reference on every call"],
+          [MODEL_TARGET_MS + " ms", "Real-time speed, from the use-case map"],
           [`$${INPUT_USD_PER_MILLION}`, "Per million input tokens. Output is free."],
           [String(DEMOS.length), "Demos, one for each category and use case"],
           [String(DECISION_SHAPES.length), "Decision shapes, from the task table"],
@@ -79,7 +79,7 @@ export function Landing() {
       <section className="mx-auto grid max-w-6xl gap-8 px-5 py-16 lg:grid-cols-3">
         {[
           ["1", "Paste a key", "It stays in localStorage. Nothing on the server remembers it."],
-          ["2", "The browser calls this app", "A same-origin proxy forwards the documented System One request. The preflight from a browser did not return an allow-origin header."],
+          ["2", "You pay for input tokens", `$${INPUT_USD_PER_MILLION} per million. Output tokens are free. Every demo shows the token count from the response and the cost of that call.`],
           ["3", "Jev answers, code decides", "Choice, score, and noul come back with probabilities. The branch, the rank, and the model pick are if-statements."],
         ].map(([n, title, body]) => (
           <div key={n}>
@@ -103,7 +103,7 @@ function Instrument() {
     <aside className="rise rounded-3xl border border-line bg-card p-5 shadow-[0_20px_60px_rgb(23_22_15/0.06)]" style={{ animationDelay: "120ms" }}>
       <div className="flex items-center justify-between">
         <p className="mono text-[11px] uppercase tracking-[0.16em] text-muted">Interface preview</p>
-        <p className="mono text-[11px] text-muted">not a live call</p>
+        <p className="mono text-[11px] text-muted">preview</p>
       </div>
       <p className="serif mt-4 text-3xl leading-none">Department</p>
       <p className="mt-2 text-sm text-muted">A choice distribution, the way a live demo draws one.</p>

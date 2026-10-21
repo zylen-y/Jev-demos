@@ -31,11 +31,11 @@ Deploy on Vercel with no required environment variable. The browser key is not a
 3. The browser sends `Authorization: Bearer <key>` to this app’s `/api/jev` and `/api/models`.
 4. The server builds a `TypeSafeClient` (`logLevel: "off"`) and calls `POST https://api.typesafe.ai/v1/systemone` or `GET https://api.typesafe.ai/v1/models`.
 
-A browser `OPTIONS` preflight against the TypeSafe API did not return `Access-Control-Allow-Origin`, so a direct browser call would fail. The same-origin proxy exists for that reason. It is not an open proxy: the upstream URL is fixed, the body is capped at 1,000,000 characters, and the key is redacted from error text.
+The browser does not call `api.typesafe.ai` directly. An `OPTIONS` preflight from this app’s origin did not return `Access-Control-Allow-Origin`, so the same-origin proxy forwards the documented System One request. It is not an open proxy: the upstream URL is fixed, the body is capped at 1,000,000 characters, and the key is redacted from error text. The landing page does not explain that hop. It states the price.
 
-Every demo measures the round trip and prices input tokens at **$0.042 per million** (`$42/Btok` on [the models page](https://docs.typesafe.ai/models)). Output tokens are free. A chars/4 figure shown before a call is an estimate. Requests use the alias `jev-latest`. The response `model` field is the resolved version.
+Every demo measures the round trip and prices input tokens at **$0.042 per million** (`$42/Btok`, also written `$0.042` per Mtok, on [the models page](https://docs.typesafe.ai/models)). Output tokens are free. Docs do not publish a per-call price, so the site does not invent one. A chars/4 figure shown before a call is an estimate. Requests use the alias `jev-latest`. The response `model` field is the resolved version.
 
-The ~150 ms number on the site is Jev’s model time, used as a reference. The latency you see includes this app and the network. Relay turns retries off so that bar is one attempt.
+The [use-case map](https://docs.typesafe.ai/concepts/use-case-map) documents real-time decisions at 150 ms and describes this class of work as 100x cheaper. The latency drawn on each demo is the measured round trip through this app and the network, set against that 150 ms mark. Relay turns retries off so that bar is one attempt.
 
 ### What the proxy will not forward
 
