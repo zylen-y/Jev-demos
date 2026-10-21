@@ -26,7 +26,7 @@ export function storyCaption(step: StoryStep, total: number): StoryCopy {
     case "wave":
       return {
         title: `…and re-judge the last ${count} edits at once.`,
-        detail: "Red means the verdict changed.",
+        detail: "Red means the new rule reverts it.",
       };
     case "examples":
       return { title: "These mention an election, so the new rule reverts them.", detail: null };
@@ -45,22 +45,46 @@ function toRevert(row: FlipRow): boolean {
   return row.before != null && row.after === "revert" && row.before !== "revert";
 }
 
-/** Revealed flips, with rule matches that became REVERT ahead of other churn. */
+export function titleKey(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function dedupeTitles<T extends FlipRow>(rows: readonly T[]): T[] {
+  const seen = new Set<string>();
+  const kept: T[] = [];
+  for (const row of rows) {
+    const key = titleKey(row.edit.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(row);
+  }
+  return kept;
+}
+
+/** Edits in the revealed prefix that the election rule newly reverts. */
+export function countRuleReverts<T extends FlipRow>(rows: readonly T[], revealed: number): number {
+  const end = Math.min(rows.length, Math.max(0, Math.floor(revealed)));
+  let count = 0;
+  for (let index = 0; index < end; index += 1) {
+    const row = rows[index];
+    if (!row || !toRevert(row) || !mentionsElection(row.edit.title, row.edit.summary)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/** Revealed election → REVERT rows, one card per page title. Other churn stays off this list. */
 export function pickRuleFlips<T extends FlipRow>(rows: readonly T[], revealed: number, limit: number): T[] {
   const end = Math.min(rows.length, Math.max(0, Math.floor(revealed)));
   const ranked: { row: T; index: number; rank: number }[] = [];
   for (let index = 0; index < end; index += 1) {
     const row = rows[index];
-    if (!row?.before || !row.after || row.before === row.after) continue;
-    const revert = toRevert(row);
-    const titled = revert && mentionsElection(row.edit.title, "");
-    const mentioned = revert && mentionsElection(row.edit.title, row.edit.summary);
-    ranked.push({ row, index, rank: titled ? 3 : mentioned ? 2 : revert ? 1 : 0 });
+    if (!row || !toRevert(row) || !mentionsElection(row.edit.title, row.edit.summary)) continue;
+    const titled = mentionsElection(row.edit.title, "");
+    ranked.push({ row, index, rank: titled ? 2 : 1 });
   }
-  const reversible = ranked.filter((item) => item.rank > 0);
-  const pool = reversible.length > 0 ? reversible : ranked;
-  pool.sort((a, b) => b.rank - a.rank || b.index - a.index);
-  return pool.slice(0, Math.max(0, limit)).map((item) => item.row);
+  ranked.sort((a, b) => b.rank - a.rank || b.index - a.index);
+  return dedupeTitles(ranked.map((item) => item.row)).slice(0, Math.max(0, limit));
 }
 
 /** The held examples. Election → REVERT wins when at least two of those exist. */

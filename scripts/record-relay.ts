@@ -9,7 +9,8 @@ import { assertPageHidesKey, duration, ensureDir, ffmpeg, launchBrowser, seedKey
 
 const STREAM_MS = 5_500;
 const JUDGE_MS = 6_000;
-const CHANGE_MS = 4_200;
+const AFTER_TYPE_MS = 800;
+const WAVE_HOLD_MS = 2_500;
 const EXAMPLES_MS = 7_000;
 const CARD_MS = 3_400;
 
@@ -100,20 +101,33 @@ async function recordTake(
   await setStory(page, "judge");
   await page.waitForTimeout(JUDGE_MS);
   await setStory(page, "change");
-  await page.getByTestId("relay-policy").fill(RECORD_POLICY);
-  await page.waitForTimeout(CHANGE_MS);
+  const policy = page.getByTestId("relay-policy");
+  await policy.click();
+  await policy.fill("");
+  await policy.pressSequentially(RECORD_POLICY, { delay: 18 });
+  await page.waitForTimeout(AFTER_TYPE_MS);
   await page.getByTestId("relay-rejudge").click();
   await page.mouse.move(28, 28);
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   });
   await setStory(page, "wave");
-  await page.waitForSelector('[data-testid="relay-wave"][data-state="done"]', { timeout: options.mock ? 30_000 : 180_000 });
+  await page.waitForFunction(
+    () => {
+      const stage = document.querySelector("[data-testid=relay-stage]");
+      const total = Number(stage?.getAttribute("data-backlog") ?? "0");
+      const shown = Number(stage?.getAttribute("data-shown") ?? "0");
+      return stage?.getAttribute("data-settled") === "1" && total > 0 && shown >= total;
+    },
+    undefined,
+    { timeout: options.mock ? 30_000 : 180_000 },
+  );
   await page.waitForFunction(
     () => (document.querySelector("[data-testid=relay-metrics]")?.getAttribute("data-burst-size") ?? "") !== "",
     undefined,
     { timeout: 15_000 },
   );
+  await page.waitForTimeout(WAVE_HOLD_MS);
   await setStory(page, "examples");
   await page.waitForFunction(
     () => Number(document.querySelector("[data-testid=relay-highlights]")?.getAttribute("data-count") ?? "0") >= 1,

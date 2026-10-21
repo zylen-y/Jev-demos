@@ -22,7 +22,7 @@ import {
 import { metricDataAttributes, spendFromSummary, type MetricReading } from "@/lib/relay/metrics";
 import { columnsFor, paintRelayField } from "@/lib/relay/paint";
 import { formatRelayCents, formatRelayUsd, percentile, summarizeRelay, type RelaySample, type RelaySummary } from "@/lib/relay/stats";
-import { isStoryStep, pickRuleFlips, pickShowcase, sampleVerdict, storyCaption, type StoryStep } from "@/lib/relay/story";
+import { countRuleReverts, isStoryStep, pickRuleFlips, pickShowcase, sampleVerdict, storyCaption, type StoryStep } from "@/lib/relay/story";
 import { backfillWikipedia, editFromEvent, RELAY_BACKLOG, WIKI_STREAM_URL, type WikiEdit } from "@/lib/relay/wiki";
 import type { JudgedRow } from "@/lib/relay/judge";
 
@@ -585,7 +585,10 @@ export function RelayStage() {
   const verdictSample = useMemo(() => sampleVerdict(cells), [cells]);
   const sweeping = phase === "playing" || phase === "done";
   const readout = relayReadout(census, sweeping);
-  const headlineLabel = sweeping ? "Flipped" : "Judged";
+  const ruleReverts = useMemo(() => countRuleReverts(cells, revealed), [cells, revealed]);
+  const showRuleCount = present && sweeping;
+  const headlineLabel = showRuleCount ? "Reverted" : sweeping ? "Flipped" : "Judged";
+  const headlineValue = showRuleCount ? ruleReverts : readout.headline;
   const telling = present && storyStep != null;
   const showCounter = !telling || storyStep === "wave";
   const showSidebar = !telling || storyStep === "wave";
@@ -623,6 +626,8 @@ export function RelayStage() {
       data-mock={mock ? "1" : "0"}
       data-phase={phase}
       data-present={present ? "1" : "0"}
+      data-reverts={ruleReverts}
+      data-settled={phase === "done" && census.total > 0 && census.shown >= census.total ? "1" : "0"}
       data-shown={census.shown}
       data-story={storyStep ?? ""}
       data-testid="relay-stage"
@@ -677,12 +682,13 @@ export function RelayStage() {
           <div className={`pointer-events-none absolute left-4 top-4 sm:left-6 sm:top-6 ${present ? "max-w-xs sm:left-8 sm:top-6" : ""}`}>
             <p className={`mono uppercase text-[#efeae0]/60 ${present ? "text-sm tracking-[0.18em]" : "text-[11px] tracking-[0.2em]"}`}>{headlineLabel}</p>
             <p
-              className={`serif leading-none ${readout.headline > 0 ? "text-[#ff3b1f]" : "text-[#efeae0]"} ${present ? "text-7xl" : "text-6xl sm:text-7xl lg:text-8xl"}`}
-              data-count={readout.headline}
+              className={`serif leading-none ${headlineValue > 0 ? "text-[#ff3b1f]" : "text-[#efeae0]"} ${present ? "text-7xl" : "text-6xl sm:text-7xl lg:text-8xl"}`}
+              data-count={headlineValue}
               data-testid="relay-flips"
             >
-              {readout.headline.toLocaleString()}
+              {headlineValue.toLocaleString()}
             </p>
+            {showRuleCount ? <p className="mt-2 text-xl text-[#efeae0]/80">by the new rule</p> : null}
             <p className={`mt-2 text-[#efeae0]/75 ${present ? "text-xl" : "text-sm"}`}>
               {sweeping ? `${readout.unchanged.toLocaleString()} unchanged` : "baseline"}
               {census.failed > 0 ? ` · ${census.failed.toLocaleString()} failed` : ""}
@@ -693,8 +699,8 @@ export function RelayStage() {
             {present && sweeping ? <WaveLegend /> : <Legend />}
           </div>
         ) : (
-          <p className="sr-only" data-count={readout.headline} data-testid="relay-flips">
-            {readout.headline.toLocaleString()}
+          <p className="sr-only" data-count={headlineValue} data-testid="relay-flips">
+            {headlineValue.toLocaleString()}
           </p>
         )}
         {storyStep && storyStep !== "examples" && storyStep !== "card" ? <StoryBanner step={storyStep} total={census.total} /> : null}
@@ -890,7 +896,11 @@ function WaveLegend() {
     <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm uppercase tracking-[0.14em] text-[#efeae0]/75">
       <li className="flex items-center gap-2">
         <span className="inline-block h-3 w-3 bg-[#ff3b1f]" />
-        Verdict changed
+        Reverted by the rule
+      </li>
+      <li className="flex items-center gap-2">
+        <span className="inline-block h-3 w-3 bg-[#4a403c]" />
+        Other change
       </li>
       <li className="flex items-center gap-2">
         <span className="inline-block h-3 w-3 bg-[#173628]" />

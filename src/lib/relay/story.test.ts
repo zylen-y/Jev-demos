@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { mentionsElection, pickRuleFlips, pickShowcase, sampleVerdict, storyCaption, type FlipRow } from "./story";
+import { countRuleReverts, mentionsElection, pickRuleFlips, pickShowcase, sampleVerdict, storyCaption, type FlipRow } from "./story";
 
 function row(title: string, before: FlipRow["before"], after: FlipRow["after"], summary = ""): FlipRow {
   return { before, after, edit: { title, summary } };
 }
 
 describe("story captions", () => {
-  it("names the wave and says red means the verdict changed", () => {
+  it("names the wave and says red means the new rule reverts it", () => {
     const copy = storyCaption("wave", 2400);
     expect(copy.title).toContain("2,400");
-    expect(copy.detail).toBe("Red means the verdict changed.");
+    expect(copy.detail).toBe("Red means the new rule reverts it.");
     expect(storyCaption("card", 2400).detail).toBe("What a policy change would have done, before you ship it.");
   });
 });
@@ -45,6 +45,18 @@ describe("rule flips", () => {
       "Maine election results",
       "2026 Senate election",
     ]);
+    expect(pickRuleFlips(rows, rows.length, 4).some((item) => item.edit.title === "Starships (song)")).toBe(false);
+    const repeated = [
+      row("2026 United States Senate election in Montana", "review", "revert"),
+      row("2026 United States Senate election in Montana", "review", "revert", "turnout"),
+      row("2026 United States Senate election in Ohio", "keep", "revert"),
+      row("Linen", "keep", "revert"),
+    ];
+    expect(pickShowcase(repeated, repeated.length, 3).map((item) => item.edit.title)).toEqual([
+      "2026 United States Senate election in Ohio",
+      "2026 United States Senate election in Montana",
+    ]);
+    expect(countRuleReverts(repeated, repeated.length)).toBe(3);
     expect(sampleVerdict([
       { before: "keep" as const, edit: { title: "File:Cat.jpg" } },
       { before: "keep" as const, edit: { title: "Q1088552" } },

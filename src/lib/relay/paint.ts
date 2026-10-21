@@ -1,4 +1,4 @@
-import { cellTone, type JudgedRow, type RelayAction } from "./judge";
+import { cellTone, mentionsElection, type JudgedRow, type RelayAction } from "./judge";
 
 const SOLID: Record<RelayAction, string> = {
   keep: "#1f8f52",
@@ -7,9 +7,23 @@ const SOLID: Record<RelayAction, string> = {
 };
 
 export const CHANGED_FILL = "#ff3b1f";
+export const MUTED_CHANGE = "#4a403c";
 
-export function flippedFill(action: RelayAction, markChanges: boolean): string {
-  return markChanges ? CHANGED_FILL : SOLID[action];
+type PaintCell = JudgedRow & { edit?: { title: string; summary: string } };
+
+export function flippedFill(action: RelayAction, markChanges: boolean, ruleRevert = false): string {
+  if (!markChanges) return SOLID[action];
+  return ruleRevert ? CHANGED_FILL : MUTED_CHANGE;
+}
+
+function isRuleRevert(row: PaintCell): boolean {
+  return Boolean(
+    row.before &&
+      row.after === "revert" &&
+      row.before !== "revert" &&
+      row.edit &&
+      mentionsElection(row.edit.title, row.edit.summary),
+  );
 }
 
 const HELD: Record<RelayAction, string> = {
@@ -41,7 +55,7 @@ export function paintRelayField(
     width: number;
     height: number;
     dpr: number;
-    cells: readonly JudgedRow[];
+    cells: readonly PaintCell[];
     revealed: number;
     columns: number;
     /** Bright red marks a verdict that changed, instead of the new action color. */
@@ -77,8 +91,9 @@ export function paintRelayField(
     if (failed) {
       fill = "#3a3632";
     } else if (tone === "flipped" && row.after) {
-      fill = flippedFill(row.after, markChanges);
-      rings.push({ x, y, w: cellW, h: cellH });
+      const hero = markChanges && isRuleRevert(row);
+      fill = flippedFill(row.after, markChanges, hero);
+      if (!markChanges || hero) rings.push({ x, y, w: cellW, h: cellH });
     } else if (tone === "unchanged" && row.before) {
       fill = HELD[row.before];
       inset = Math.min(cellW, cellH) * 0.2;
